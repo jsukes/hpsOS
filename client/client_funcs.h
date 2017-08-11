@@ -1,0 +1,286 @@
+
+
+struct ENETsock{
+	int sockfd;
+	int portNum;
+	const char *server_addr;
+	struct sockaddr_in server_sockaddr;
+};
+
+
+struct FPGAvars{
+	void *virtual_base;
+	int fd;
+	volatile uint32_t* read_addr;
+	volatile uint32_t* gpio0_addr;
+	volatile uint32_t* gpio1_addr;
+	volatile uint32_t* transReady;
+	volatile uint32_t* trigDelay;
+	volatile uint32_t* recLen;
+	volatile uint32_t* stateReset;
+	volatile uint32_t* trigCnt;
+	volatile uint32_t* stateVal;	
+};
+
+
+void FPGAclose(struct FPGAvars *FPGA){
+	
+	if( munmap( FPGA->virtual_base, HW_REGS_SPAN ) != 0 ) {
+		printf( "ERROR: munmap() failed...\n" );
+		close( FPGA->fd );
+	}
+	close( FPGA->fd );
+}
+
+
+int FPGA_init(struct FPGAvars *FPGA){
+	
+	if( ( FPGA->fd = open( "/dev/mem", ( O_RDWR | O_SYNC ) ) ) == -1 ) {
+		printf( "ERROR: could not open \"/dev/mem\"...\n" );
+		return( 0 );
+	}
+	
+	FPGA->virtual_base = mmap( NULL, HW_REGS_SPAN, ( PROT_READ | PROT_WRITE ), MAP_SHARED, FPGA->fd, HW_REGS_BASE );
+	
+	FPGA->read_addr = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_H2F_READ_ADDR_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->gpio0_addr = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_F2H_GPIO0_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->gpio1_addr = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_F2H_GPIO1_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->transReady = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_F2H_TRANSMIT_READY_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->trigDelay = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_H2F_TRIG_DELAY_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->trigCnt = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_F2H_TRIG_COUNT_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->recLen = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_H2F_RECORD_LENGTH_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+
+	FPGA->stateReset = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_H2F_FPGA_STATE_RESET_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->stateVal = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_F2H_FPGA_STATE_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	if( FPGA->virtual_base == MAP_FAILED ) {
+		printf( "ERROR: mmap() failed...\n" );
+		close( FPGA->fd );
+		return( 0 );
+	}
+	
+	DREF(FPGA->transReady) = 0;
+	DREF(FPGA->trigDelay) = 0;
+	DREF(FPGA->trigCnt) = 0;
+	DREF(FPGA->recLen) = 1024;
+	
+	DREF(FPGA->stateReset)=1;
+	usleep(10);
+	DREF(FPGA->stateReset)=0;
+	DREF(FPGA->read_addr) = 0;
+	
+	return(1);
+}
+
+
+void getBoardData(int argc, char *argv[], int *boardData){
+		
+	char const* const fileName = "boardData";
+    FILE* file = fopen(fileName, "r");
+    char line[256];
+	int n=0;
+	
+    while(fgets(line, sizeof(line), file)){
+        boardData[n] = atoi(line);
+        n++;    
+    }  
+    fclose(file);
+}
+
+
+void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){
+	struct timeval t0,t1;
+	int diff;
+    int one = 1;
+	ENET->server_addr = serverIP;	
+	ENET->sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	ENET->server_sockaddr.sin_port = htons(INIT_PORT);
+	ENET->server_sockaddr.sin_family = AF_INET;
+	ENET->server_sockaddr.sin_addr.s_addr = inet_addr(ENET->server_addr);
+	
+	gettimeofday(&t0,NULL);
+	
+	if(connect(ENET->sockfd, (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){		
+		while(connect(ENET->sockfd, (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){
+			gettimeofday(&t1,NULL);
+			diff = (t1.tv_sec-t0.tv_sec);
+			if(diff>(600)){
+				printf("NO CONNECT!!!!\n");
+				break;
+			}	
+		}
+	}
+	
+    setsockopt(ENET->sockfd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(int));	
+    int tmpmsg[4] = {0};
+	tmpmsg[0] = boardNum;
+	send(ENET->sockfd, &tmpmsg, 4*sizeof(int), 0);
+}
+
+
+void FPGA_dataAcqController(int inPipe, int outPipe, uint32_t *data){
+	
+    struct FPGAvars FPGA;
+	int pipemsg[4] = {0};
+	int nready;
+    uint32_t n;
+    uint32_t datatmp[2*MAX_DATA_LEN];
+	if( FPGA_init(&FPGA) == 1 ){
+		pipemsg[0] = 0; pipemsg[1] = 1;
+		write(outPipe,&pipemsg,4*sizeof(int));
+	} else {
+		pipemsg[0] = 0; pipemsg[1] = 0;
+		write(outPipe,&pipemsg,4*sizeof(int));
+	}
+	
+    // local variable to update recLen
+	uint32_t recLen = 1024;
+    
+    // timer variables for debugging
+    // struct timeval tv0,tv1;
+    // int diff;
+    
+    // variables for select loop
+	int maxfd, sec, usec;
+	struct timeval tv;
+	fd_set readfds;
+	maxfd = inPipe;
+	sec = 0; usec = 500;
+
+	int dataRunner = 1;
+	int dataGo = 0;
+	int cnt = 0;
+
+	while(dataRunner == 1){
+		tv.tv_sec = sec;
+		tv.tv_usec = usec;
+		FD_ZERO(&readfds);
+		FD_SET(inPipe,&readfds);
+		
+		nready = select(maxfd+1,&readfds,NULL,NULL,&tv);
+
+		if( nready > 0 ){
+			if(FD_ISSET(inPipe, &readfds)){
+
+				n = read(inPipe,&pipemsg,4*sizeof(int));
+				if(n == 0){ // connection close or parent terminated
+                    dataRunner = 0;
+                    break;
+                }
+				
+                switch(pipemsg[0]){
+					case(CASE_TRIGDELAY):{ // change trig delay
+						DREF(FPGA.trigDelay) = 20*pipemsg[1];
+						printf("trig Delay set to %.2f\n",(float)DREF(FPGA.trigDelay)/20.0);
+						break;
+					}
+
+					case(CASE_RECLEN):{ // change record length
+						DREF(FPGA.transReady) = 0;
+						if(pipemsg[1]<MAX_DATA_LEN){
+							DREF(FPGA.recLen) = pipemsg[1];
+							recLen = DREF(FPGA.recLen);
+							printf("recLen set to %zu\n",DREF(FPGA.recLen));
+						} else {
+							DREF(FPGA.recLen) = 1024;
+							recLen = DREF(FPGA.recLen);
+						}
+						break;
+					}
+
+					case(CASE_TRANSREADY_TIMEOUT):{ // change select loop timeout/how often transReady is checked (min 100us)
+						if(pipemsg[1] > 99 && pipemsg[1] <10000000){
+							sec = pipemsg[1]/1000000;
+							usec = pipemsg[1]%1000000; 
+							tv.tv_sec = sec;
+							tv.tv_usec = usec;
+						} else {
+							tv.tv_sec = 0;
+							tv.tv_usec = 1000;
+						}
+                        printf("timeout set to %lus + %luus\n",tv.tv_sec,tv.tv_usec);
+						break;
+					}
+
+					case(CASE_CLOSE_PROGRAM):{ // close process fork
+                        printf("closing program\n");
+						FPGAclose(&FPGA);
+						dataGo = 0;
+						dataRunner = 0;
+						break;
+					}
+
+					case(CASE_DATAGO):{ // if dataGo is zero it won't transmit data to server, basically a wait state
+                        if(pipemsg[1] == 1){
+                            printf("dataAcqGo set to 1\n");
+							dataGo = 1;
+						} else {
+                            printf("dataAcqGo set to 0\n");
+							dataGo = 0;
+						}
+						break;
+					}
+
+					default:{
+                        printf("default case, shutting down\n");
+						FPGAclose(&FPGA);
+						dataRunner = 0;
+						dataGo = 0;
+						break;
+					}
+				}
+			}	
+		} else if ( nready == 0 && dataGo == 1 ){ // if select loop times out, check for data
+			if(DREF(FPGA.transReady) == 1){
+                //gettimeofday(&tv0,NULL);
+			    //printf("data triggered\n");	
+                for(n=0;n<recLen;n++){
+					DREF(FPGA.read_addr) = n;
+					datatmp[n] = DREF(FPGA.gpio0_addr);
+					datatmp[recLen+n] = DREF(FPGA.gpio1_addr);	
+				}
+                memcpy(data,datatmp,2*recLen*sizeof(uint32_t));
+                DREF(FPGA.stateReset) = 1; 
+				DREF(FPGA.read_addr) = 0;
+                DREF(FPGA.stateReset) = 0;
+                //gettimeofday(&tv1,NULL);
+                //diff = tv1.tv_usec-tv0.tv_usec;
+	            //if(cnt%100 == 0) 
+                //printf("data Loop Time = %d, %d\n",diff, cnt);
+				pipemsg[0] = 17; pipemsg[1] = 17;
+				pipemsg[2] = 1; pipemsg[3] = 2*recLen;
+				write(outPipe,&pipemsg,4*sizeof(int));
+                cnt++;
+			}
+		} //else if ( nready == 0 && dataGo == 0){
+			//gettimeofday(&t1,NULL);
+			//diff = (t1.tv_sec-t0.tv_sec)*1e6+(t1.tv_usec-t0.tv_usec);
+			//printf("data acq loop time %d\n",diff);
+		//}
+	}
+	printf("dataAcq loop broken\n");
+	close(inPipe); close(outPipe);
+    FPGAclose(&FPGA);
+	_exit(0);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
