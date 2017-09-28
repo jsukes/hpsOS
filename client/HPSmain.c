@@ -45,7 +45,7 @@
 #define HW_REGS_SPAN ( 0x04000000 )   
 #define HW_REGS_MASK ( HW_REGS_SPAN - 1 )
 #define DREF(X) ( *(volatile uint32_t *) X )
-#define MAX_DATA_LEN 8191
+#define MAX_DATA_LEN 8192
 #define INIT_PORT 3400
 
 // case flags for switch statement in FPGA_dataAcqController
@@ -54,7 +54,8 @@
 #define CASE_TRANSREADY_TIMEOUT 2
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
-#define CASE_ACQS_PER_TRANSMIT 5 // not implemented yet
+#define CASE_IMGMODE 13 // not implemented yet
+#define CASE_SETPACKETSIZE 11
 
 int runMain = 1;
 
@@ -62,25 +63,29 @@ int runMain = 1;
 
 int main(int argc, char *argv[]) { printf("into main!\n");
 	
-	uint32_t *data = mmap( NULL, 2*MAX_DATA_LEN*sizeof(uint32_t), ( PROT_READ | PROT_WRITE ), MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    
+    uint32_t dtmp[2*MAX_DATA_LEN];
 	int c2p[2]; pipe(c2p);
 	int p2c[2];	pipe(p2c);	
+    int sv[2]; socketpair(AF_UNIX,SOCK_STREAM,0,sv);
 	
 	pid_t pid;
 	pid = fork();
 	if( pid == 0 ){
 		close(c2p[0]); close(p2c[1]);
-		FPGA_dataAcqController(p2c[0],c2p[1],data);
+		FPGA_dataAcqController(p2c[0],c2p[1],sv[1]);
 	} else {
 		close(c2p[1]); close(p2c[0]);
 	}
 	
-    int pipemsg[4] = {0};
+    uint32_t pipemsg[4] = {0};
 	int enetmsg[4] = {0};
     
 	// loads board-specific data from onboard file
     int boardData[3];
+    int recLen = 2048;
+    int packetsize = 512;
+    int rdcnt;
+    int imgmode = 0;
 	getBoardData(argc,argv,boardData); 
 	
 	// create ethernet socket to communicate with server and establish connection
@@ -90,7 +95,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	 // declare and initialize variables for the select loop
 	int maxfd;
 	maxfd = (ENET.sockfd > c2p[0]) ? ENET.sockfd : c2p[0];
-	int nready,nrecv;
+    maxfd = (maxfd > sv[0]) ? maxfd : sv[0];
+	int nready,nrecv,cnt;
 	fd_set readfds;
 	
 	struct timeval tv;
@@ -100,7 +106,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	    tv.tv_usec = 10000;
 		FD_ZERO(&readfds);
 		FD_SET(ENET.sockfd,&readfds);
-		FD_SET(c2p[0],&readfds);
+		//FD_SET(c2p[0],&readfds);
+        FD_SET(sv[0],&readfds);
 		
 		nready = select(maxfd+1, &readfds, (fd_set *) 0, (fd_set *) 0, &tv);
 		
@@ -113,24 +120,41 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 				}
 				//printf("enetmsg %d, %d, %d, %d, %d\n",enetmsg[0],enetmsg[1],enetmsg[2],enetmsg[3],nrecv);
 				if( enetmsg[0]<17 ){
-					write(p2c[1],&enetmsg,4*sizeof(int));
+                    if( enetmsg[0] == 11){
+                        packetsize = enetmsg[1];
+                    }else if(enetmsg[0] == 1){
+                        recLen = enetmsg[1];
+                        write(p2c[1],&enetmsg,4*sizeof(int));
+                    }else if(enetmsg[0] == 13){
+                        imgmode = enetmsg[1];
+					    write(p2c[1],&enetmsg,4*sizeof(int));
+                    }else{
+					    write(p2c[1],&enetmsg,4*sizeof(int));
+                    }
 				} else {
 					kill(pid,SIGKILL);
 					runMain = 0;
 				}
 			}
  
-			if( FD_ISSET(c2p[0],&readfds) ){ // message from child
-				read(c2p[0],&pipemsg,4*sizeof(int));
-                //printf("sending data over ENET,%d,%d,%d,%d\n",pipemsg[0],pipemsg[1],pipemsg[2],pipemsg[3]);
-				if(pipemsg[0] == 17){
-					if(send(ENET.sockfd,data,pipemsg[3]*sizeof(uint32_t),MSG_CONFIRM) == -1) perror("send");
-				}
+			if( FD_ISSET(sv[0],&readfds) ){ // message from child
+                if(imgmode == 0){
+                    rdcnt = read(sv[0],&dtmp,2*recLen*sizeof(uint32_t));
+                    write(ENET.sockfd,dtmp,rdcnt);
+                } else {//send(sv[0],&maxfd,sizeof(int),0);
+                    rdcnt = read(sv[0],&cnt,sizeof(uint32_t));
+                    write(ENET.sockfd,&cnt,rdcnt);
+                    if(cnt == 8){
+                        rdcnt = read(sv[0],&dtmp,2*recLen*sizeof(uint32_t));
+                        write(ENET.sockfd,dtmp,rdcnt);
+                        cnt = 0;
+                    }
+                }
 			}
 		}
 	} 
-	munmap(data, 2*MAX_DATA_LEN*sizeof(uint32_t));
-	close(c2p[0]); close(p2c[1]);
+	//munmap(data, 2*MAX_DATA_LEN*sizeof(uint32_t));
+	close(c2p[0]); close(p2c[1]); close(sv[0]);
 	close(ENET.sockfd);
 	sleep(1);
     return( 0 );
