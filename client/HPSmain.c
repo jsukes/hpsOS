@@ -44,7 +44,8 @@
 #define HW_REGS_BASE ( ALT_STM_OFST )  
 #define HW_REGS_SPAN ( 0x04000000 )   
 #define HW_REGS_MASK ( HW_REGS_SPAN - 1 )
-#define DREF(X) ( *(volatile uint32_t *) X )
+
+#define DREF(X) ( *(uint32_t *) X )
 #define MAX_DATA_LEN 8192
 #define INIT_PORT 3400
 
@@ -54,9 +55,8 @@
 #define CASE_TRANSREADY_TIMEOUT 2
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
-#define CASE_IMGMODE 13 // not implemented yet
 #define CASE_SETPACKETSIZE 11
-
+#define CASE_KILLPROGRAM 17
 int runMain = 1;
 
 #include "client_funcs.h"
@@ -85,7 +85,6 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     int recLen = 2048;
     int packetsize = 512;
     int rdcnt;
-    int imgmode = 0;
 	getBoardData(argc,argv,boardData); 
 	
 	// create ethernet socket to communicate with server and establish connection
@@ -119,15 +118,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 					enetmsg[0] = 3;
 				}
 				//printf("enetmsg %d, %d, %d, %d, %d\n",enetmsg[0],enetmsg[1],enetmsg[2],enetmsg[3],nrecv);
-				if( enetmsg[0]<17 ){
-                    if( enetmsg[0] == 11){
+				if( enetmsg[0]<CASE_KILLPROGRAM ){
+                    if( enetmsg[0] == CASE_SETPACKETSIZE ){
                         packetsize = enetmsg[1];
-                    }else if(enetmsg[0] == 1){
+                    }else if( enetmsg[0] == CASE_RECLEN ){
                         recLen = enetmsg[1];
                         write(p2c[1],&enetmsg,4*sizeof(int));
-                    }else if(enetmsg[0] == 13){
-                        imgmode = enetmsg[1];
-					    write(p2c[1],&enetmsg,4*sizeof(int));
                     }else{
 					    write(p2c[1],&enetmsg,4*sizeof(int));
                     }
@@ -138,18 +134,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 			}
  
 			if( FD_ISSET(sv[0],&readfds) ){ // message from child
-                if(imgmode == 0){
-                    rdcnt = read(sv[0],&dtmp,2*recLen*sizeof(uint32_t));
-                    write(ENET.sockfd,dtmp,rdcnt);
-                } else {//send(sv[0],&maxfd,sizeof(int),0);
-                    rdcnt = read(sv[0],&cnt,sizeof(uint32_t));
-                    write(ENET.sockfd,&cnt,rdcnt);
-                    if(cnt == 8){
-                        rdcnt = read(sv[0],&dtmp,2*recLen*sizeof(uint32_t));
-                        write(ENET.sockfd,dtmp,rdcnt);
-                        cnt = 0;
-                    }
-                }
+                rdcnt = read(sv[0],&dtmp,2*recLen*sizeof(uint32_t));
+                write(ENET.sockfd,dtmp,rdcnt);
 			}
 		}
 	} 

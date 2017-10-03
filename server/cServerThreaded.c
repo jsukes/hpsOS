@@ -46,6 +46,7 @@ unsigned long g_recLen, g_packetsize;
 unsigned long g_idx1len,g_idx2len,g_idx3len;
 unsigned long g_id1,g_id2,g_id3;
 
+
 struct ENETsock{
     int sockfd;
     int clifd[MAX_FPGAS];
@@ -181,7 +182,46 @@ void resetFPGAdataAcqParams(struct ENETsock *ENET, unsigned long maxboard){
 }
 
 
+struct threadData{	
+	struct ENETsock *esock;
+	struct IPCsock *isock;
+	size_t dataLen;
+	uint32_t *data;
+	int n;
+	int *k;
+	int maxboard;
+};
+
+
+void *threadReceiver(void *dtmp){
+	
+	nrecv = read(dtmp.ENET.clifd[dtmp.n],dtmp.data,dtmp.dataLen);
+                    
+	if (nrecv == 0){
+		removeClient(&dtmp.ENET,n);
+	} else {
+		dtmp.ENET.p_idx[dtmp.n] += nrecv/sizeof(uint32_t);
+		if(dtmp.ENET.p_idx[dtmp.n] == dtmp.dataLen/sizeof(uint32_t)){
+			dtmp.k++;
+			dtmp.ENET.p_idx[n] = 0;
+		}
+		if(dtmp.k==dtmp.maxboard){
+			if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
+				perror("IPC send failed\n");
+				exit(1);
+			}
+			k = 0;
+		}
+	}
+	
+	
+}
+
+
 int main(int argc, char *argv[]) { printf("into main!\n");
+	
+	pthread_t tid[MAX_FPGAS];
+	struct threadData THREADS[MAX_FPGAS];
 	
     struct ENETsock ENET = {.clifd={0},.board={0},.p_idx={0}};
     setupENETserver(&ENET);
@@ -418,24 +458,30 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         data_idx += g_id3*2*g_recLen;
                     }
                     
-                    nrecv = read(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],2*g_recLen*sizeof(uint32_t));
+                    THREADS[n].esock = &ENET;
+                    THREADS[n].isock = &IPC;
+                    THREADS[n].data = &data[data_idx+ENET.p_idx[n]];
+                    THREADS[n].dataLen = 2*g_recLen*sizeof(uint32_t);
                     
-                    if (nrecv == 0){
-                        removeClient(&ENET,n);
-                    } else {
-                        ENET.p_idx[n] += nrecv/sizeof(uint32_t);
-                        if(ENET.p_idx[n] == 2*g_recLen){
-                            k++;
-                            ENET.p_idx[n] = 0;
-                        }
-                        if(k==maxboard){
-                            if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
-                                perror("IPC send failed\n");
-                                exit(1);
-                            }
-                            k = 0;
-                        }
-                    }
+                    pthread_create(&tid[n], NULL, threadReceiver, (void *) &THREADS[N]);
+                    //~ nrecv = read(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],2*g_recLen*sizeof(uint32_t));
+                    
+                    //~ if (nrecv == 0){
+                        //~ removeClient(&ENET,n);
+                    //~ } else {
+                        //~ ENET.p_idx[n] += nrecv/sizeof(uint32_t);
+                        //~ if(ENET.p_idx[n] == 2*g_recLen){
+                            //~ k++;
+                            //~ ENET.p_idx[n] = 0;
+                        //~ }
+                        //~ if(k==maxboard){
+                            //~ if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
+                                //~ perror("IPC send failed\n");
+                                //~ exit(1);
+                            //~ }
+                            //~ k = 0;
+                        //~ }
+                    //~ }
                     
                 }
             }

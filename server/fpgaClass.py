@@ -40,7 +40,9 @@ class FPGA(object):
 			except:
 				print 'port number invalid'		
 
+
 class a_funcs():
+	
 	def fire(self, n):
 		data = np.array([self.startcode,self.bcmd5,0,0,0,n,8,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
@@ -62,34 +64,29 @@ class a_funcs():
 		byte4 = 0
 		data = np.array([self.startcode,self.bcmd5,0,byte4,byte3,byte2,byte1,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
-		
-		
+			
 	def set_amp(self, n):
 
 		data = np.array([self.startcode,self.bcmd5,0,0,0,n,9,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
-		
-		
+			
 	def set_LEDs(self, n):
 
 		acmd = 7
 		data = np.array([self.startcode,self.bcmd5,0,0,0,n,acmd,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 		
-
 	def set_phase(self, n):
 
 		data = np.array([self.startcode,self.bcmd5,0,0,0,n,10,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
-		
-		
+				
 	def set_trig(self, n):
 
 		acmd = 6
 		data = np.array([self.startcode,self.bcmd5,0,0,0,n,acmd,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
-		
-		
+				
 	def start_loop(self, n,m):
 
 		acmd = 2
@@ -104,8 +101,7 @@ class a_funcs():
 		data = np.array([self.startcode,self.bcmd5,0,byte4,byte3,byte2,byte1,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		
 		self.ser.write(data)
-		
-		
+				
 	def end_loop(self, n):
 
 		acmd = 3
@@ -115,8 +111,7 @@ class a_funcs():
 
 		data = np.array([self.startcode,self.bcmd5,0,0,0,0,byte1,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
-		
-		
+				
 	def wait(self, n):
 
 		acmd = 4
@@ -129,8 +124,7 @@ class a_funcs():
 		byte4 = int(bits[0:8],2)
 		data = np.array([self.startcode,self.bcmd5,0,byte4,byte3,byte2,byte1,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
-		
-		
+				
 	def waitsec(self, t):
 		
 		n = round(t*100e6)-7
@@ -147,22 +141,21 @@ class a_funcs():
 		byte4 = int(bits[0:8],2)
 		data = np.array([self.startcode,self.bcmd5,0,byte4,byte3,byte2,byte1,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
-		
-		
+				
 	def noop(self, n):
 		
 		return
-
-
-	
 			
 	def __init__(self,x):
 		self.ser = x.ser
 		self.startcode = 170
 		self.endcode = 85
 		self.bcmd5 = 5
+
+
 		
 class b_funcs():
+	
 	def stop_execution(self):
 		
 		bdaddr = 0
@@ -209,7 +202,23 @@ class b_funcs():
 		q_val = q[::-1]
 		data = np.array([self.startcode,bcmd,0,int(q_val[0:8],2),int(q_val[8:16],2),int(q_val[16:24],2),int(q_val[24:32],2),self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)	
-				
+	
+	def set_mask_on_forcefully(self):
+		#~ %   Sends "b" command instruction to specify a channel mask.
+		#~ %   n represents the bit pattern for active and masked channels.
+		#~ %   1 = channel active
+		#~ %   0 = channel masked (off)
+		#~ %   n = 32 bit binary string
+
+		bcmd = 13
+		p = list('00000000000000000000000000000000')
+		#~ for nn in range(0,len(p)):
+			#~ p[nn] = '1'
+		q = "".join(p)
+		q_val = q[::-1]
+		data = np.array([self.startcode,bcmd,0,int(q_val[0:8],2),int(q_val[8:16],2),int(q_val[16:24],2),int(q_val[24:32],2),self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		self.ser.write(data)	
+										
 	def set_mask(self,n):
 		#~ %   Sends "b" command instruction to specify a channel mask.
 		#~ %   n represents the bit pattern for active and masked channels.

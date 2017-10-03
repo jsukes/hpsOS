@@ -11,9 +11,9 @@ ARCH= arm
 
 build: $(TARGET)
 $(TARGET): HPSmain.o 
-	$(CC) $(LDFLAGS)   $^ -o $@ -lm
+	$(CC) -O3 $(LDFLAGS)  $^ -o $@ -lm
 %.o : %.c
-	$(CC) $(CFLAGS) -c $< -o $@ -lm
+	$(CC) -O3 $(CFLAGS) -c $< -o $@ -lm
 
 .PHONY: clean
 clean:

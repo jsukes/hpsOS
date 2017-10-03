@@ -11,15 +11,27 @@ struct ENETsock{
 struct FPGAvars{
 	void *virtual_base;
 	int fd;
-	volatile uint32_t* read_addr;
-	volatile uint32_t* gpio0_addr;
-	volatile uint32_t* gpio1_addr;
-	volatile uint32_t* transReady;
-	volatile uint32_t* trigDelay;
-	volatile uint32_t* recLen;
-	volatile uint32_t* stateReset;
-	volatile uint32_t* trigCnt;
-	volatile uint32_t* stateVal;	
+	uint32_t volatile* read_addr;
+	uint32_t volatile* gpio0_addr;
+	uint32_t volatile* gpio1_addr;
+	uint32_t volatile* transReady;
+	uint32_t volatile* trigDelay;
+	uint32_t volatile* recLen;
+	uint32_t volatile* stateReset;
+	uint32_t volatile* trigCnt;
+	uint32_t volatile* stateVal;	
+};
+
+
+union AcqdData{
+	struct{
+		unsigned short c1:8;
+		unsigned short c2:8;
+		unsigned short c3:8;
+		unsigned short c4:8;
+	};
+	
+	uint32_t data;
 };
 
 
@@ -69,7 +81,7 @@ int FPGA_init(struct FPGAvars *FPGA){
 	DREF(FPGA->transReady) = 0;
 	DREF(FPGA->trigDelay) = 0;
 	DREF(FPGA->trigCnt) = 0;
-	DREF(FPGA->recLen) = 1024;
+	DREF(FPGA->recLen) = 2048;
 	
 	DREF(FPGA->stateReset)=1;
 	usleep(10);
@@ -126,24 +138,22 @@ void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){
 
 
 void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
-	
-    struct FPGAvars FPGA;
+    
+    struct FPGAvars FPGA;	
+    
 	uint32_t pipemsg[4] = {0};
 	int nready,m,k,l; m = 0;
     uint32_t n;
     uint32_t datatmp[2*MAX_DATA_LEN];
-	if( FPGA_init(&FPGA) == 1 ){
+    if( FPGA_init(&FPGA) == 1 ){
 		pipemsg[0] = 0; pipemsg[1] = 1;
 	} else {
 		pipemsg[0] = 0; pipemsg[1] = 0;
 	}
-	
-    // local variable to update recLen
+
+    // local version of runtime variables 
 	uint32_t recLen = 2048;
-    uint32_t packetsize;
-    packetsize = 512;
-    uint32_t imgmode,elidx;
-    imgmode = 0; elidx = 0;
+    uint32_t packetsize = 512;
     
     // variables for select loop
 	int maxfd, sec, usec;
@@ -238,12 +248,6 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
                         packetsize = pipemsg[1];
                         break;
                     }
-                    
-                    case(CASE_IMGMODE):{
-                        printf("image mode set to: %zu\n",pipemsg[1]);
-                        imgmode = pipemsg[1];
-                        break;                    
-                    }
  
 					default:{
                         printf("default case, shutting down\n");
@@ -256,71 +260,21 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 			}	
 		} else if ( nready == 0 && dataGo == 1 ){ // if select loop times out, check for data
 			if(DREF(FPGA.transReady) == 1){
-                if(imgmode == 0){
-                    m = 0;	
-                    for(n=0;n<recLen;n++){
-                        DREF(FPGA.read_addr) = n;
-                        datatmp[2*m] = DREF(FPGA.gpio0_addr);
-                        datatmp[2*m+1] = DREF(FPGA.gpio1_addr);
-                        m++;
-                        if((n%packetsize) == (packetsize-1)){
-                            write(sv,datatmp,2*packetsize*sizeof(uint32_t));
-                            m=0;
-                        }
-                    }
-                    DREF(FPGA.stateReset) = 1; 
-                    DREF(FPGA.read_addr) = 0;
-                    DREF(FPGA.stateReset) = 0;
-                    cnt++;
-                } else {
-                    m = 0;
-                    k = elidx/4;
-                    l = elidx%4;
-                    if(k == 0){	
-                        if(l == 0){
-                            for(n=0;n<recLen;n++){
-                                DREF(FPGA.read_addr) = n;
-                                datatmp[2*m] = DREF(FPGA.gpio0_addr) & 255;
-                                m++;
-                            }
-                        } else {
-                            for(n=0;n<recLen;n++){
-                                DREF(FPGA.read_addr) = n;
-                                datatmp[2*m] += DREF(FPGA.gpio0_addr) & (255<<8*l);
-                                m++;
-                            }
-                        }
-                        elidx++;
-                    } else {
-                        if(l == 0){
-                            for(n=0;n<recLen;n++){
-                                DREF(FPGA.read_addr) = n;
-                                datatmp[2*m+1] = DREF(FPGA.gpio1_addr) & 255;
-                                m++;
-                            }
-                        } else {
-                            for(n=0;n<recLen;n++){
-                                DREF(FPGA.read_addr) = n;
-                                datatmp[2*m+1] += DREF(FPGA.gpio1_addr) & (255<<8*l);
-                                m++;
-                            }
-                        }
-                        elidx++;
-                    }
-                    
-                    DREF(FPGA.stateReset) = 1; 
-                    DREF(FPGA.read_addr) = 0;
-                    DREF(FPGA.stateReset) = 0;
-                    cnt++;
-                    write(sv,&elidx,sizeof(uint32_t));
-                    if(elidx == 8){
-                        elidx = 0; 
-                        write(sv,datatmp,2*recLen*sizeof(uint32_t));
+                m = 0;	
+                for(n=0;n<recLen;n++){
+                    DREF(FPGA.read_addr) = n;
+                    datatmp[2*m] = DREF(FPGA.gpio0_addr);
+                    datatmp[2*m+1] = DREF(FPGA.gpio1_addr);
+                    m++;
+                    if((n%packetsize) == (packetsize-1)){
+                        write(sv,datatmp,2*packetsize*sizeof(uint32_t));
                         m=0;
                     }
-                    
                 }
-
+                DREF(FPGA.stateReset) = 1; 
+                DREF(FPGA.read_addr) = 0;
+                DREF(FPGA.stateReset) = 0;
+                cnt++;
             }
 	    }
     }

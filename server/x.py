@@ -15,8 +15,11 @@ import os, subprocess
 import ctypes
 from scipy.signal import hilbert
 from scipy.signal import savgol_filter
+from scipy.signal import butter,lfilter,freqz
 
-IPCSOCK = "/home/five_hundred_khz_array/Desktop/devVersion/server/lithium_ipc"
+RECVBOARDS = 8
+MAIZEBOARDS = 8
+IPCSOCK = "./lithium_ipc"
 x = FPGA()
 a = a_funcs(x)
 b = b_funcs(x)
@@ -54,6 +57,11 @@ def calcDelays(pts):
 		delays[:,m] = (np.max(t)-t)*100
 		
 	return delays.astype(int)
+
+
+def makePingPoint():
+	pts = np.zeros((1,3))	
+	return pts
 
 
 def makePattern(npts):
@@ -95,10 +103,10 @@ def connectHPS():
 		
 def uploadDelays():
 	
-	chargetime = 500*np.ones(256)
+	chargetime = 500*np.ones(MAIZEBOARDS*32)
 	chargetime = chargetime
 		
-	for mother in range(0,8):
+	for mother in range(0,MAIZEBOARDS):
 		b.select_motherboard(mother)
 		chanset = np.asarray(range(0,32))+mother*32 
 		b.set_chipmem_wloc(0)
@@ -110,10 +118,10 @@ def uploadDelays():
 
 def uploadDelays2(delays): #~ one with bubbles and without bubbles
 	
-	chargetime = 500*np.ones(256)
-	chargetime2 = 100*np.ones(256)
+	chargetime = 500*np.ones(MAIZEBOARDS*32)
+	chargetime2 = 100*np.ones(MAIZEBOARDS*32)
 		
-	for mother in range(0,8):
+	for mother in range(0,MAIZEBOARDS):
 		b.select_motherboard(mother)
 		chanset = np.asarray(range(0,32))+mother*32 
 		b.set_chipmem_wloc(0)
@@ -138,6 +146,35 @@ def uploadCommands():
 	a.loadincr_chipmem(1,2)
 	a.wait(1)
 	a.set_phase(0)
+	a.wait(1)
+	a.fire(0)
+	
+	a.set_trig(15) # [ 0 0 0 0 ] 2^3 + 2^2 + 2^1 + 2^0
+	a.waitsec(5e-6)
+	a.set_trig(0)
+	a.waitsec(50e-6)
+	a.halt()
+
+	
+def uploadCommands2():
+	b.stop_execution()
+	
+	b.set_imem_wloc(0)
+	a.loadincr_chipmem(1,0)
+	a.wait(1)
+	a.set_amp(0)
+	a.wait(1)
+	a.loadincr_chipmem(1,2)
+	a.wait(1)
+	a.set_phase(0)
+	a.wait(1)
+	a.fire(0)
+	
+	a.waitsec(400e-6)
+	
+	a.loadincr_chipmem(1,1)
+	a.wait(1)
+	a.set_amp(0)
 	a.wait(1)
 	a.fire(0)
 	
@@ -209,6 +246,10 @@ def saveData(fname):
 	msg = struct.pack(cmsg,10,0,0,0,fname)
 	ff.write(msg)
 	time.sleep(0.05)
+	
+def ipcGetData():
+	msg = struct.pack(cmsg,12,0,0,0,"")
+	ff.write(msg)
 	
 def shutdown():
 	msg = struct.pack(cmsg,17,0,0,0,"")
@@ -309,7 +350,7 @@ def steerSafely():
 	saveData("steerTest1")
 
 
-def sortData(recLen,nlocs,npulses,nct):
+def loadSortData(recLen,nlocs,npulses,nct):
 	#~ data_idx = (ENET.board[n]-1)*g_idx1len*g_idx2len*g_idx3len*2*g_recLen;
 	#~ data_idx += g_id1*g_idx2len*g_idx3len*2*g_recLen;
 	#~ data_idx += g_id2*g_idx3len*2*g_recLen;
@@ -317,10 +358,48 @@ def sortData(recLen,nlocs,npulses,nct):
 	c = np.fromfile("steerTest1",dtype=np.uint32,count=-1)
 	dt14 = np.dtype((np.uint32,{'c1':(np.uint8,0),'c2':(np.uint8,1),'c3':(np.uint8,2),'c4':(np.uint8,3)}))
 	d = c.view(dt14)
-	f = np.zeros((nct,npulses,nlocs,recLen,64))
+	f = np.zeros((nct,npulses,nlocs,recLen,RECVBOARDS*8))
 	#~ print len(d['c1'])/(2*2048*256),len(c)
 	
-	for mb in range(0,8):
+	for mb in range(0,MAIZEBOARDS):
+		didx0 = mb*nct*nlocs*npulses*2*recLen
+		for ctn in range(0,nct):
+			didx1 = didx0+ctn*npulses*nlocs*2*recLen
+			for plsn in range(0,npulses):
+				didx2 = didx1+plsn*nlocs*2*recLen
+				for locn in range(0,nlocs):
+					didx = didx2+locn*2*recLen
+					
+					dd = np.zeros((recLen,8))
+					dd[:,7] = d['c1'][didx:(didx+2*recLen):2]
+					dd[:,3]  = d['c1'][(didx+1):(didx+2*recLen):2]
+					dd[:,6]  = d['c2'][didx:(didx+2*recLen):2]
+					dd[:,2]  = d['c2'][(didx+1):(didx+2*recLen):2]
+					dd[:,5]  = d['c3'][didx:(didx+2*recLen):2]
+					dd[:,1]  = d['c3'][(didx+1):(didx+2*recLen):2]
+					dd[:,4]  = d['c4'][didx:(didx+2*recLen):2]
+					dd[:,0]  = d['c4'][(didx+1):(didx+2*recLen):2]
+				
+					f[ctn,plsn,locn,:,mb*8:(mb+1)*8] = dd
+				
+	return f
+
+	
+def bsortData(ipcdata,recLen,nlocs,npulses,nct):
+	#~ data_idx = (ENET.board[n]-1)*g_idx1len*g_idx2len*g_idx3len*2*g_recLen;
+	#~ data_idx += g_id1*g_idx2len*g_idx3len*2*g_recLen;
+	#~ data_idx += g_id2*g_idx3len*2*g_recLen;
+	#~ data_idx += g_id3*2*g_recLen;
+	#~ c = np.fromfile("steerTest1",dtype=np.uint32,count=-1)
+	#~ print len(ipcdata)
+	CDATASTRUCT = struct.Struct('{}{}{}'.format('= ',2*recLen*nlocs*npulses*nct*RECVBOARDS,'L')) 
+	c = np.array(CDATASTRUCT.unpack(ipcdata),dtype=np.uint32)
+	dt14 = np.dtype((np.uint32,{'c1':(np.uint8,0),'c2':(np.uint8,1),'c3':(np.uint8,2),'c4':(np.uint8,3)}))
+	d = c.view(dt14)
+	f = np.zeros((nct,npulses,nlocs,recLen,RECVBOARDS*8))
+	#~ print len(d['c1'])/(2*2048*256),len(c)
+	
+	for mb in range(0,RECVBOARDS):
 		didx0 = mb*nct*nlocs*npulses*2*recLen
 		for ctn in range(0,nct):
 			didx1 = didx0+ctn*npulses*nlocs*2*recLen
@@ -348,8 +427,10 @@ def steerSafelyPlot():
 	xx = np.linspace(-20,20,81)
 	yy = np.linspace(-20,20,81)
 	XX,YY = np.meshgrid(xx,yy)
-	ZZ = np.zeros(XX.shape)+0.0
+	ZZ = np.zeros(XX.shape)#-2.0*(XX+20)/40.0-1
 	xyz,nxyz = loadArray()
+	
+	
 	
 	els = np.array([8, 10, 12, 15, 18, 23, 34, 38,		# board 1 (top, stack 1)
 			40, 44, 48, 50, 56, 61, 68, 78,		 
@@ -360,53 +441,101 @@ def steerSafelyPlot():
 			201, 206, 211, 225, 229, 236, 238, 242,
 			246, 248, 249, 251, 253, 254, 258, 260])-8
 	
-	recLen = 2048		
+	RR = np.zeros((81,81,64))
+	for n in range(0,64):
+		RR[:,:,n] = ((xyz[els[n],0]-XX)**2+(xyz[els[n],1]-YY)**2+(xyz[els[n],2]-ZZ)**2)**0.5
+		
+	recLen = 2048
 	
-	def getField(dtt,pt):
+	def getField(ipcdata,pt,dtt):
 		ev = 5
+		window = np.ones(ev)/float(ev)
 		t0 = 20
 		t1 = recLen-20
-		T = 153+dtt
-		tw = np.linspace(T+t0/20.,T+t0/20.+(t1-t0)/20,(t1-t0))/2.0
-		window = np.ones(ev)/float(ev)
-		r = (tw-5)*1.49
 		AA = np.zeros(XX.shape)
-		f = sortData(recLen,1,1,1)
-
+		f = bsortData(ipcdata,recLen,1,1,1)
+		T = 150
+		tw = np.linspace(T+t0/20.,T+t0/20.+(t1-t0)/20,(t1-t0))[::ev]-100
+		ll = len(tw)
+		hwf = np.zeros(ll+1)
+		
 		for n in range(0,64):
 			ff = f[0,0,0,t0:t1:ev,n]
 			ff-=np.mean(ff)
 			ff[ff>=129]=128.9
 			wf = 8*ff/(129.0**2-ff**2)**0.5
 			wf -= np.mean(wf)
+			hwf[0:-1] = np.abs(hilbert(wf))
+			hwf[ll] = 0
+			rr = ((xyz[els[n],0]-XX)**2+(xyz[els[n],1]-YY)**2+(xyz[els[n],2]-ZZ)**2)**0.5					
+			r = (tw+dtt-5)*1.48
+			rridx = ((rr-np.min(r))/(np.max(r)-np.min(r))*len(r)).astype(int)
+			rridx[rridx<0] = ll
+			rridx[rridx>=len(hwf)] = ll
 			
-			hwf = np.abs(hilbert(wf))
-			#~ hwf/=np.max(hwf[len(hwf)/4.0:3*len(hwf)/4.0])
-			hwf[0] = 0
-			#~ hwf[hwf<(0.5*max(hwf))]=0
-			#~ hwf = np.convolve(hwf,window)
-			rr = ((xyz[els[n],0]-XX)**2+(xyz[els[n],1]-YY)**2+(xyz[els[n],2]-ZZ)**2)**0.5
-			rridx = ((rr-np.min(r[::ev]))/(np.max(r[::ev])-np.min(r[::ev]))*len(r[::ev])).astype(int)
-			rridx[rridx<0] = 0
-			rridx[rridx>=len(hwf)] = 0
-			cc = hwf[rridx]
-			
-			#~ rr = ((pt[0]-XX)**2+(pt[1]-YY)**2+(pt[2]-ZZ)**2)**0.5
-			bb = 1#np.exp(-0.5*(rr/23.5)**2)
-			AA+=cc*bb
+			AA+=hwf[rridx]
 		
 		return AA
 		
-	pts = makePattern(20)
+	def getFieldb(ipcdata,pt,dtt):
+		ev = 10
+		#~ window = np.ones(ev)/float(ev)
+		t0 = 20
+		t1 = recLen-20
+		AA = np.zeros(XX.shape)
+		f = bsortData(ipcdata,recLen,1,1,1)[:,:,:,t0:t1:ev,:]
+		T = 150
+		tw = np.linspace(T+t0/20.,T+t0/20.+(t1-t0)/20,(t1-t0))[::ev]-100
+		ll = len(tw)
+		hwf = np.zeros(ll+1)
+		f = f-np.mean(f,axis=3)
+		f[f>=129]=128.9
+		wfa = 8*f/(129.0**2-f**2)**0.5
+		r = (tw+dtt-5)*1.48
+		rmn,lr = r.min(),len(r)
+		dr = r.max()-rmn
+		for n in range(0,64):
+			wf = wfa[0,0,0,:,n]
+			hwf[0:-1] = np.abs(hilbert(wf))
+			hwf[ll] = 0
+			rr = RR[:,:,n]				
+			
+			rridx = ((rr-rmn)*lr/dr).astype(int)
+			rridx[rridx<0] = ll
+			rridx[rridx>ll] = ll
+			
+			AA+=hwf[rridx]
+				
+		AA/=AA.max()
+		return AA**3
+	
+	def getwf(ipcdata,pt,dtt):
+		ev = 1
+		#~ window = np.ones(ev)/float(ev)
+		t0 = 20
+		t1 = recLen-20
+		AA = np.zeros(XX.shape)
+		f = bsortData(ipcdata,recLen,1,1,1)[:,:,:,t0:t1:ev,:]
+		T = 150
+		tw = np.linspace(T+t0/20.,T+t0/20.+(t1-t0)/20,(t1-t0))[::ev]-100
+		ll = len(tw)
+		hwf = np.zeros(ll+1)
+		f = f-np.mean(f,axis=3)
+		f[f>=129]=128.9
+		wfa = 8*f/(129.0**2-f**2)**0.5
+		
+		return wfa
+			
+	pts = makePattern(5)
 	delays = calcDelays(pts)
 	uploadDelays2(delays)
 	uploadCommands()
 	nlocs = pts.shape[0]
-	npulses = 10
+	npulses = 4
 	
 	pack_size = 512
 	timeOut = 1100
-	PRF = 150
+	PRF = 2
 	
 	resetVars()
 	
@@ -419,12 +548,12 @@ def steerSafelyPlot():
 	allocMem()
 	dataAcqStart(1)
 	fig,ax = plt.subplots(1,1)
-	ax.set_aspect('equal')
-	ax.set_xlim([-25,25])
+	#~ ax.set_aspect('equal')
+	ax.set_xlim([0,2048])
 	ax.set_ylim([-25,25])
 	fig.canvas.draw()
-	ax.contourf(XX,YY,ZZ*0)
-	axbg = fig.canvas.copy_from_bbox(ax.bbox)
+	#~ ax.contourf(XX,YY,ZZ*0)
+	#~ axbg = fig.canvas.copy_from_bbox(ax.bbox)
 	
 	tt = np.zeros(npulses*nlocs)
 	for ctloc in range(0,1):
@@ -435,45 +564,281 @@ def steerSafelyPlot():
 				t0 = time.time()
 				setIDX(0,0,0)
 				b.stop_execution()
+				b.set_imem_wloc(0)
+				a.loadincr_chipmem(1,1)
 				b.set_imem_wloc(4)
 				a.loadincr_chipmem(1,int(np.mod(locn,nlocs)+2))
 				b.go()
-				
+				#~ time.sleep(1.0/(10.0*PRF))#-dt)
 				dummy = ipcsock.recv(4,socket.MSG_WAITALL)
-				saveData("steerTest1")
-				time.sleep(0.001)
-				#~ mm=[0,0]
-				AA = np.zeros(XX.shape)
-				for dtt in range(2,11):
-					AA += getField(dtt,pts[int(np.mod(locn,nlocs)),:])
-					#~ if np.max(AA)>mm[0]:
-						#~ mm[0] = np.max(AA)
-						#~ mm[1] = dtt
-					
-				fig.canvas.restore_region(axbg)
-				ax.contourf(XX,YY,AA)
-				ax.set_title(dtt)
-				ax.plot(pts[int(np.mod(locn,nlocs)),0],pts[int(np.mod(locn,nlocs)),1],'bo')
-				ax.plot(pts[:,0],pts[:,1],'k--')
-				ax.plot(pts[:,0]*0.9,pts[:,1]*0.9,'k--')
-				ax.plot(pts[:,0]*1.1,pts[:,1]*1.1,'k--')
-				fig.canvas.blit(ax.bbox)
-				plt.pause(0.1e-7)
-				ax.clear()
-					
-					
-				#~ print 'dtt=', mm[1]
-				dt = (time.time()-t0)
-				tt[plsn*nlocs+locn] = (time.time()-t0)
+				ipcGetData()
+				cc = ipcsock.recv(2*recLen*8*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
+				#~ saveData("steerTest1")
 				
-				if(dt<1.0/PRF):
+				time.sleep(0.5/PRF)
+				
+				b.stop_execution()
+				b.set_imem_wloc(0)
+				a.loadincr_chipmem(1,0)
+				b.set_imem_wloc(4)
+				a.loadincr_chipmem(1,int(np.mod(locn,nlocs)+2))
+				b.go()
+				#~ time.sleep(1.0/(10.0*PRF))#-dt)
+				dummy = ipcsock.recv(4,socket.MSG_WAITALL)
+				ipcGetData()
+				dd = ipcsock.recv(2*recLen*8*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
+				
+				for dtt in range(-12,-11):
+					wfa = getwf(dd,pts[int(np.mod(locn,nlocs)),:],dtt)
+					wfb = getwf(cc,pts[int(np.mod(locn,nlocs)),:],dtt)
+					ax.plot(wfa[0,0,0,500:,0])
+					ax.plot(3.5*wfb[0,0,0,500:,0])
+					ax.set_xlim([0,2048])
+					ax.set_ylim([-10,10])
+					
+					#~ ax.contourf(XX,YY,AA)
+					#~ ax.plot(pts[int(np.mod(locn,nlocs)),0],pts[int(np.mod(locn,nlocs)),1],'wo',markersize=15)
+					#~ ax.plot(pts[:,0],pts[:,1],'k--')
+					#~ ax.plot(pts[:,0]*0.9,pts[:,1]*0.9,'k--')
+					#~ ax.plot(pts[:,0]*1.1,pts[:,1]*1.1,'k--')
+					#~ ax.grid()
+					
+					#~ fig.canvas.blit(ax.bbox)
+					ax.set_title(dtt)
+					plt.pause(0.1e-6)
+					ax.clear()
+				
+				#~ print 'dtt=', mm[1]
+				dt = (time.time()-t0)+0.00015
+				
+				if(dt>0 and dt<1.0/PRF):
 					time.sleep(1.0/PRF-dt)
+				#~ ax.clear()	
+				tt[plsn*nlocs+locn] = (time.time()-t0)
 		time.sleep(1)
 		#~ print 'time =',(time.time()-t0)*1e3,'ms'
 	print '\navg time: ',np.round(np.mean(tt)*1e3,1),'+-',np.round(np.std(tt)*1e3,1)
 	print 'PRF =', np.round(1.0/np.mean(tt),1)
 	print 'min/max times:', np.round(np.min(tt)*1e3,1),'  -  ',np.round(np.max(tt)*1e3,1),'\n\n'
+
+
+def steerSafelyPlotWF():
+		
+	recLen = 1024
 	
+	def getwf(ipcdata):
+		ev = 4
+		wf = bsortData(ipcdata,recLen,1,1,1)[:,:,:,::ev,:]
+		
+		return wf
+			
+	#~ pts = makePingPoint()
+	pts = makePattern(3)
+	delays = calcDelays(pts)
+	uploadDelays2(delays)
+	uploadCommands()
+	nlocs = pts.shape[0]
+	npulses = 1
+	
+	pack_size = 512
+	timeOut = 1100
+	PRF = 1
+	
+	resetVars()
+	
+	setTrigDelay(0)
+	
+	setRecLen(recLen)
+	setPacketSize(pack_size)
+	setTimeout(timeOut)
+	setDataAlloc(1,1,1)
+	allocMem()
+	dataAcqStart(1)
+	
+	tt = np.zeros(npulses*nlocs)
+	for ctloc in range(0,1):
+		b.set_imem_wloc(0)
+		a.loadincr_chipmem(1,int(ctloc))
+		for plsn in range(0,npulses):
+			for locn in range(0,nlocs):
+				t0 = time.time()
+				setIDX(0,0,0)
+				b.stop_execution()
+				b.set_imem_wloc(0)
+				a.loadincr_chipmem(1,0)
+				b.set_imem_wloc(4)
+				a.loadincr_chipmem(1,int(np.mod(locn,nlocs)+2))
+				b.go()
+				#~ time.sleep(1.0/(10.0*PRF))#-dt)
+				dummy = ipcsock.recv(4,socket.MSG_WAITALL)
+				ipcGetData()
+				cc = ipcsock.recv(2*recLen*RECVBOARDS*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
+				#~ saveData("steerTest1")
+				dt = (time.time()-t0)
+				print dt
+				
+				time.sleep(1.0/PRF)
+				
+				
+				wfa = getwf(cc)
+				
+				for n in range(0,RECVBOARDS*8):
+					plt.plot(wfa[0,0,0,0:200,n]/256.0+n)
+				plt.show()	
+				dt = (time.time()-t0)+0.00015
+				if(dt>0 and dt<1.0/PRF):
+					time.sleep(1.0/PRF-dt)
+				#~ ax.clear()	
+				tt[plsn*nlocs+locn] = (time.time()-t0)
+		time.sleep(1)
+		#~ print 'time =',(time.time()-t0)*1e3,'ms'
+	
+		
+	
+	print '\navg time: ',np.round(np.mean(tt)*1e3,1),'+-',np.round(np.std(tt)*1e3,1)
+	print 'PRF =', np.round(1.0/np.mean(tt),1)
+	print 'min/max times:', np.round(np.min(tt)*1e3,1),'  -  ',np.round(np.max(tt)*1e3,1),'\n\n'
+	
+
+	
+
+def steerSafelyGNUPlot():
+	
+	xx = np.linspace(-20,20,81)
+	yy = np.linspace(-20,20,81)
+	XX,YY = np.meshgrid(xx,yy)
+	ZZ = np.zeros(XX.shape)#-2.0*(XX+20)/40.0-1
+	xyz,nxyz = loadArray()
+	
+	#~ for mb in range(0,8):
+		#~ b.select_motherboard(mb)
+		#~ b.set_mask_off_forcefully()
+			
+	
+	els = np.array([8, 10, 12, 15, 18, 23, 34, 38,		# board 1 (top, stack 1)
+			40, 44, 48, 50, 56, 61, 68, 78,		 
+			79, 86, 89, 91, 92, 93, 95, 97,
+			100, 103, 107, 111, 112, 115, 117, 127,		# board 4 (bottom, stack 1)
+			136, 142, 150, 156, 157, 159, 167, 168,			# board 5 (top, stack 2)
+			169, 173, 176, 177, 181, 183, 189, 191,
+			201, 206, 211, 225, 229, 236, 238, 242,
+			246, 248, 249, 251, 253, 254, 258, 260])-8
+	
+	RR = np.zeros((len(xx),len(yy),64))
+	for n in range(0,64):
+		RR[:,:,n] = ((xyz[els[n],0]-XX)**2+(xyz[els[n],1]-YY)**2+(xyz[els[n],2]-ZZ)**2)**0.5
+		
+	recLen = 2048
+	
+		
+	def getFieldb(ipcdata,pt,dtt):
+		ev = 10
+		#~ window = np.ones(ev)/float(ev)
+		t0 = 20
+		t1 = recLen-20
+		AA = np.zeros(XX.shape)
+		f = bsortData(ipcdata,recLen,1,1,1)[:,:,:,t0:t1:ev,:]
+		T = 150
+		tw = np.linspace(T+t0/20.,T+t0/20.+(t1-t0)/20,(t1-t0))[::ev]-100
+		ll = len(tw)
+		hwf = np.zeros(ll+1)
+		f = f-np.mean(f,axis=3)
+		f[f>=129]=128.9
+		wfa = 8*f/(129.0**2-f**2)**0.5
+		r = (tw+dtt-5)*1.48
+		rmn,lr = r.min(),len(r)
+		dr = r.max()-rmn
+		for n in range(0,64):
+			wf = wfa[0,0,0,:,n]
+			hwf[0:-1] = np.abs(hilbert(wf-np.mean(wf)))
+			hwf[ll] = 0
+			rr = RR[:,:,n]				
+			
+			rridx = ((rr-rmn)*lr/dr).astype(int)
+			rridx[rridx<0] = ll
+			rridx[rridx>ll] = ll
+			
+			AA+=hwf[rridx]
+				
+		#~ AA/=AA.max()
+		return AA#**3
+		
+	pts = makePattern(20)
+	delays = calcDelays(pts)
+	uploadDelays2(delays)
+	uploadCommands()
+	nlocs = pts.shape[0]
+	npulses = 100
+	
+	pack_size = 512
+	timeOut = 1100
+	PRF = 100
+	
+	resetVars()
+	
+	setTrigDelay(150)
+	
+	setRecLen(recLen)
+	setPacketSize(pack_size)
+	setTimeout(timeOut)
+	setDataAlloc(1,1,1)
+	allocMem()
+	dataAcqStart(1)
+	
+	pt = subprocess.Popen(['gnuplot','-e'],shell=True,stdin=subprocess.PIPE,)
+	pt.stdin.write("set pm3d map; set size square\n")
+	
+	tt = np.zeros(npulses*nlocs)
+	for ctloc in range(0,1):
+		b.set_imem_wloc(0)
+		a.loadincr_chipmem(1,int(ctloc))
+		for plsn in range(0,npulses):
+			for locn in range(0,nlocs):
+				t0 = time.time()
+				setIDX(0,0,0)
+				#~ b.stop_execution()
+				#~ b.set_imem_wloc(0)
+				#~ a.loadincr_chipmem(1,1)				
+				#~ b.set_imem_wloc(4)
+				#~ a.loadincr_chipmem(1,int(np.mod(locn,nlocs)+2))
+				#~ b.go()
+				#~ dummy = ipcsock.recv(4,socket.MSG_WAITALL)
+				#~ ipcGetData()
+				#~ dd = ipcsock.recv(2*recLen*8*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
+				#~ time.sleep(0.5/PRF)
+				b.stop_execution()
+				b.set_imem_wloc(0)
+				a.loadincr_chipmem(1,0)				
+				b.set_imem_wloc(4)
+				a.loadincr_chipmem(1,int(np.mod(locn,nlocs)+2))
+				b.go()
+				dummy = ipcsock.recv(4,socket.MSG_WAITALL)
+				ipcGetData()
+				cc = ipcsock.recv(2*recLen*8*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
+				
+				dtt = -(delays[:,locn].max()-delays[:,locn].min())/100.0+1
+				
+				AA = getFieldb(cc,pts[int(np.mod(locn,nlocs)),:],dtt)
+				#~ AA[80,80] = (0.5e5)**0.5#8*20/(129.0**2-20**2)**0.5*64
+				#~ AA[0,0] = 0
+				#~ BB = getFieldb(dd,pts[int(np.mod(locn,nlocs)),:],dtt)
+				np.savetxt('fdata.dat',(AA)**2,delimiter=' ')
+				time.sleep(1e-3)
+				pt.stdin.write("set pm3d map; set cbrange [0:100000]; set grid; set size square; splot 'fdata.dat' u (($1-40)/2):(($2-40)/2):3 matrix with image noti\n")
+					
+				dt = (time.time()-t0)+0.00015
+				
+				if(dt>0 and dt<1.0/PRF):
+					time.sleep(1.0/PRF-dt)
+				#~ ax.clear()	
+				tt[plsn*nlocs+locn] = (time.time()-t0)
+		time.sleep(1)
+		#~ print 'time =',(time.time()-t0)*1e3,'ms'
+	print '\navg time: ',np.round(np.mean(tt)*1e3,1),'+-',np.round(np.std(tt)*1e3,1)
+	print 'PRF =', np.round(1.0/np.mean(tt),1)
+	print 'min/max times:', np.round(np.min(tt)*1e3,1),'  -  ',np.round(np.max(tt)*1e3,1),'\n\n'
+	time.sleep(3)
+	pt.stdin.write("exit()\n")
 
 
 def pingSafely():
@@ -501,7 +866,7 @@ def pingSafely():
 		setIDX(0,0,plsn)
 		b.set_imem_wloc(4)
 		a.loadincr_chipmem(1,1)
-		for mother in range(0,8):
+		for mother in range(0,MAIZEBOARDS):
 			b.select_motherboard(mother)
 			if np.floor(plsn/32) == mother:
 				print mother,plsn
@@ -530,6 +895,7 @@ def pingSafely():
 	time.sleep(1)
 	setTimeout(5e6)
 	saveData("pingTest1")
+
 
 
 def sortData(recLen,nlocs,npulses,nct):
@@ -637,7 +1003,6 @@ def plotSteerDelays():
 		plt.show()
 		
 		
-
 def plotPing():
 	ELEMENTS = np.array([8, 10, 12, 15, 18, 23, 34, 38,		# board 1 (top, stack 1)
 			40, 44, 48, 50, 56, 61, 68, 78,		 
@@ -685,7 +1050,6 @@ def plotPing():
 			print m+8, np.argmax(np.max(f[m,:,:],axis=0))
 			plt.plot(np.max(f[m,:,:],axis=0))
 			plt.show()
-
 
 
 

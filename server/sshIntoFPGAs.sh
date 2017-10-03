@@ -15,8 +15,8 @@ filename="ipList"
 while read -r line
 do
     ipAddr="$line"
-	echo "killall test* & exit" | sshpass -p 'terasic' ssh -t -t "root@$ipAddr" > /dev/null
+	echo "killall *HPS & exit" | sshpass -p 'terasic' ssh -t -t "root@$ipAddr" > /dev/null
 	sleep 0.2
-	echo "nohup ./testHPS $MYIP & exit" | sshpass -p 'terasic' ssh -t -t "root@$ipAddr"
+	echo "nohup ./newTestHPS $MYIP & exit" | sshpass -p 'terasic' ssh -t -t "root@$ipAddr"
 	echo "into hpsIP: $ipAddr"
 done < "$filename"
