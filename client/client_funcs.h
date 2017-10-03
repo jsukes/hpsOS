@@ -33,7 +33,7 @@ union AcqdData{
 	
 	uint32_t data;
 };
-
+ //heelo
 
 void FPGAclose(struct FPGAvars *FPGA){
 	
