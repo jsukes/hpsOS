@@ -37,11 +37,10 @@
 #define CASE_SAVEDATA 10
 #define CASE_SETPACKETSIZE 11
 #define CASE_SENDDATAIPC 12
-#define CASE_IMGMODE 13
 #define CASE_SHUTDOWNSERVER 17
+int ONE = 1;
 
 unsigned long g_dataAcqMode, g_trigDelay, g_pollTime, g_cnt;
-unsigned long g_imgMode, g_elIdx;
 unsigned long g_recLen, g_packetsize;
 unsigned long g_idx1len,g_idx2len,g_idx3len;
 unsigned long g_id1,g_id2,g_id3;
@@ -126,20 +125,19 @@ void setupENETserver(struct ENETsock *ENET){
     ENET->server.sin_family = AF_INET;
     ENET->server.sin_addr.s_addr = INADDR_ANY;
     ENET->server.sin_port = htons(INIT_PORT);
+    setsockopt(ENET->sockfd,SOL_SOCKET, SO_REUSEADDR, &one, sizeof(int));
 
     if( bind(ENET->sockfd, (struct sockaddr *)&ENET->server, sizeof(ENET->server)) < 0 ){
         perror("ERROR binding socket");
         exit(1);
     }
 
-    //setsockopt(ENET->sockfd,IPPROTO_TCP, TCP_NODELAY, &one, sizeof(int));
     listen(ENET->sockfd,MAX_FPGAS);
 }
 
 
 void resetGlobalVars(){
     g_dataAcqMode = 0; g_cnt = 0; 
-    g_imgMode = 0; g_elIdx = 0;
     g_recLen = 2048; g_packetsize = 2048; g_trigDelay = 0; g_pollTime = 500;
     g_idx1len = 1; g_idx2len = 1; g_idx3len = 1;
     g_id1 = 0; g_id2 = 0; g_id3 = 0;
@@ -161,6 +159,7 @@ void sendENETmsg(struct ENETsock *ENET, int *msg, int maxboard){
     int n;
     for(n=0;n<maxboard;n++)
         send(ENET->clifd[n],msg,4*sizeof(int),MSG_CONFIRM);
+        setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
 }
 
 
@@ -211,6 +210,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     int nready,nrecv; 
     fd_set readfds;
     struct timeval tv;
+    int one = 1;
     
     int runner = 1;
     while(runner == 1){
@@ -372,16 +372,6 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             }
                             break;
                         } 
-                        case(CASE_IMGMODE):{
-                            if(fmsg.msg[1] == 1 && fmsg.msg[2] >= 0 && fmsg.msg[2] < 8){
-                                g_imgMode = 1;
-                                g_elIdx = fmsg.msg[2];
-                            } else {
-                                g_imgMode = 0;
-                                g_elIdx = 0;
-                            }
-                            break;
-                        }
                         case(CASE_SHUTDOWNSERVER):{ // close server
                             fmsg.msg[0]=8;
                             sendENETmsg(&ENET,fmsg.msg,maxboard);
@@ -419,7 +409,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                     }
                     
                     nrecv = read(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],2*g_recLen*sizeof(uint32_t));
-                    
+                    setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
                     if (nrecv == 0){
                         removeClient(&ENET,n);
                     } else {
@@ -434,6 +424,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 exit(1);
                             }
                             k = 0;
+                            setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
                         }
                     }
                     

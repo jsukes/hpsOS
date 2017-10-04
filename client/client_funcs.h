@@ -33,7 +33,7 @@ union AcqdData{
 	
 	uint32_t data;
 };
- //heelooo
+
 
 void FPGAclose(struct FPGAvars *FPGA){
 	
@@ -110,10 +110,9 @@ void getBoardData(int argc, char *argv[], int *boardData){
 void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){
 	struct timeval t0,t1;
 	int diff;
-    int zero = 0;
+    int one = 1;
 	ENET->server_addr = serverIP;	
 	ENET->sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    //setsockopt(ENET->sockfd,IPPROTO_TCP,TCP_NODELAY,&zero,sizeof(int));	
 	ENET->server_sockaddr.sin_port = htons(INIT_PORT);
 	ENET->server_sockaddr.sin_family = AF_INET;
 	ENET->server_sockaddr.sin_addr.s_addr = inet_addr(ENET->server_addr);
@@ -131,9 +130,11 @@ void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){
 		}
 	}
 	
+    //setsockopt(ENET->sockfd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(int));	
     int tmpmsg[4] = {0};
 	tmpmsg[0] = boardNum;
 	send(ENET->sockfd, &tmpmsg, 4*sizeof(int), 0);
+    setsockopt(ENET->sockfd,IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int));	
 }
 
 
@@ -142,7 +143,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
     struct FPGAvars FPGA;	
     
 	uint32_t pipemsg[4] = {0};
-	int nready,m,k,l; m = 0;
+	int nready,m; m = 0;
     uint32_t n;
     uint32_t datatmp[2*MAX_DATA_LEN];
     if( FPGA_init(&FPGA) == 1 ){
@@ -210,7 +211,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 					}
 
 					case(CASE_TRANSREADY_TIMEOUT):{ // change select loop timeout/how often transReady is checked (min 100us)
-						if(pipemsg[1] > 99 && pipemsg[1] <10000000){
+						if(pipemsg[1] > 9 && pipemsg[1] <10000000){
 							sec = pipemsg[1]/1000000;
 							usec = pipemsg[1]%1000000; 
 							tv.tv_sec = sec;
