@@ -129,6 +129,24 @@ class dataServer():
 		else:
 			print 'Invalid number of boards to getData from. Must be greater than zero. Since this function is supposed to return something, you probably have to restart the python server'
 	
+	def setChannelMask(self,c14,c58,boardN,maskState):
+		# maskState = 0, no masks, transmit after every pulse
+		# maskState = 1, mask on, DO NOT transmit after trigger
+		# maskState = 2, mask on, DO transmit after trigger (use for last pulse in sequence)
+		m14,m58,mbn = 0,0,0
+		for m in range(0,4):
+			if c14[m]>0:
+				m14 |= (0xff << m*8)
+			if c58[m]>0:
+				m58 |= (0xff << m*8)
+		if maskState != 0:
+			mbn |= (0xff << 24)
+		mbn |= maskState
+		mbn |= (boardN << 8)
+				
+		msg = struct.pack(self.cmsg,13,m14,m58,mbn,"")
+		self.ff.write(msg)
+		
 	def ipcWait(self):
 		return self.ipcsock.recv(4,socket.MSG_WAITALL)
 	
@@ -151,7 +169,7 @@ class dataServer():
 	def __init__(self):	
 		self.IPCSOCK = "./lithium_ipc"
 		self.IPCFIFO = "data_pipe"
-		self.cmsg = '4i100s'
+		self.cmsg = '4I100s'
 		self.trigDelay = 0
 		self.packetSize = 512
 		self.da = 0

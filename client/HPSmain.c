@@ -56,6 +56,7 @@
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
 #define CASE_SETPACKETSIZE 11
+#define CASE_MASKCHANNELS 13
 #define CASE_KILLPROGRAM 17
 
 int RUN_MAIN = 1;
@@ -80,7 +81,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 		close(c2p[1]); close(p2c[0]);
 	}
 	
-	int enetmsg[4] = {0};
+	uint32_t enetmsg[4] = {0};
     
 	// loads board-specific data from onboard file
     int boardData[3];
@@ -113,7 +114,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 		
 		if( nready > 0 ){
 			if( FD_ISSET( ENET.sockfd, &readfds ) ){ // message from server
-				nrecv = recv(ENET.sockfd,&enetmsg,4*sizeof(int),MSG_WAITALL);	
+				nrecv = recv(ENET.sockfd,&enetmsg,4*sizeof(uint32_t),MSG_WAITALL);	
                 setsockopt(ENET.sockfd,IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int));	
 
                 if( nrecv == 0 ){
@@ -123,7 +124,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 				
                 if( enetmsg[0]<CASE_KILLPROGRAM ){
                     if( enetmsg[0] == CASE_RECLEN ){ recLen = enetmsg[1]; }
-                    write(p2c[1],&enetmsg,4*sizeof(int));
+                    write(p2c[1],&enetmsg,4*sizeof(uint32_t));
 				} else {
 					kill(pid,SIGKILL);
 					RUN_MAIN = 0;

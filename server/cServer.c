@@ -37,6 +37,7 @@
 #define CASE_SAVEDATA 10
 #define CASE_SETPACKETSIZE 11
 #define CASE_SENDDATAIPC 12
+#define CASE_SETCHANNELMASK 13
 #define CASE_SHUTDOWNSERVER 17
 int ONE = 1;
 
@@ -64,7 +65,7 @@ struct IPCsock{
 
 
 struct FIFOmsg{
-    int msg[4];
+    uint32_t msg[4];
     char buff[100]; 
 };
 
@@ -96,7 +97,7 @@ void acceptENETconnection(struct ENETsock *ENET){
     clilen = sizeof(client);
 
     tmpfd = accept(ENET->sockfd, (struct sockaddr *)&client, &clilen);
-    //setsockopt(tmpfd,IPPROTO_TCP, TCP_NODELAY, &one, sizeof(int));
+    setsockopt(tmpfd,IPPROTO_TCP, TCP_NODELAY, &one, sizeof(int));
     recv(tmpfd, &enetmsg, 4*sizeof(int), MSG_WAITALL);
     
     for(n=0;n<MAX_FPGAS;n++){
@@ -155,16 +156,28 @@ void removeClient(struct ENETsock *ENET, int n){
 }
 
 
-void sendENETmsg(struct ENETsock *ENET, int *msg, int maxboard){
-    int n;
-    for(n=0;n<maxboard;n++)
-        send(ENET->clifd[n],msg,4*sizeof(int),MSG_CONFIRM);
-        setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
+void sendENETmsg(struct ENETsock *ENET, uint32_t *msg, int maxboard){
+    int n,bn;
+    if( ((msg[3] & 0xff000000) >> 24) == 0 ){ // broadcast to all connected boards
+        for(n=0;n<maxboard;n++){
+            send(ENET->clifd[n],msg,4*sizeof(uint32_t),MSG_CONFIRM);
+            setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
+        }
+    } else { // send to one board at a time
+        bn = (msg[3] & 0x0000ff00) >> 8; 
+        for(n=0;n<maxboard;n++){
+            if( ENET->board[n] == bn ){
+                send(ENET->clifd[n],msg,4*sizeof(uint32_t),MSG_CONFIRM);
+                setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
+                break;
+            }
+        }
+    }
 }
 
 
 void resetFPGAdataAcqParams(struct ENETsock *ENET, unsigned long maxboard){
-    int fmsg[4] ={0};
+    uint32_t fmsg[4] ={0};
 
     fmsg[0] = CASE_DATAGO; fmsg[1] = 0;
     sendENETmsg(ENET,fmsg,maxboard);
@@ -202,6 +215,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     uint32_t datatmp[2*8191];
     data = (uint32_t *)malloc(2*MAX_FPGAS*g_recLen*sizeof(uint32_t));
     unsigned long data_idx;
+    int dataMaskWait=0;
 
     int n,m,k;
     unsigned long maxboard,maxipc;
@@ -371,6 +385,15 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 exit(1);
                             }
                             break;
+                        }
+                        case(CASE_SETCHANNELMASK):{
+                            if( (fmsg.msg[3] & 0x000000ff) == 1 ){
+                                dataMaskWait = 1;
+                            } else {
+                                dataMaskWait = 0;
+                            }
+                            sendENETmsg(&ENET,fmsg.msg,maxboard);
+                            break;
                         } 
                         case(CASE_SHUTDOWNSERVER):{ // close server
                             fmsg.msg[0]=8;
@@ -413,18 +436,30 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                     if (nrecv == 0){
                         removeClient(&ENET,n);
                     } else {
-                        ENET.p_idx[n] += nrecv/sizeof(uint32_t);
-                        if(ENET.p_idx[n] == 2*g_recLen){
-                            k++;
-                            ENET.p_idx[n] = 0;
-                        }
-                        if(k==maxboard){
-                            if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
-                                perror("IPC send failed\n");
-                                exit(1);
+                        if( dataMaskWait == 0 ){
+                            ENET.p_idx[n] += nrecv/sizeof(uint32_t);
+                            if(ENET.p_idx[n] == 2*g_recLen){
+                                k++;
+                                ENET.p_idx[n] = 0;
                             }
-                            k = 0;
-                            setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
+                            if(k==maxboard){
+                                if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
+                                    perror("IPC send failed\n");
+                                    exit(1);
+                                }
+                                k = 0;
+                                setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
+                            }
+                        } else {
+                            k++;
+                            if(k==maxboard){
+                                if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
+                                    perror("IPC send failed\n");
+                                    exit(1);
+                                }
+                                k = 0;
+                                setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
+                            }
                         }
                     }
                     
