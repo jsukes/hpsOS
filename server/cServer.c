@@ -166,7 +166,7 @@ void sendENETmsg(struct ENETsock *ENET, uint32_t *msg, int maxboard){
     } else { // send to one board at a time
         bn = (msg[3] & 0x0000ff00) >> 8; 
         for(n=0;n<maxboard;n++){
-            if( ENET->board[n] == bn ){
+            if( ENET->board[n] == bn+1 ){
                 send(ENET->clifd[n],msg,4*sizeof(uint32_t),MSG_CONFIRM);
                 setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
                 break;
@@ -442,24 +442,16 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 k++;
                                 ENET.p_idx[n] = 0;
                             }
-                            if(k==maxboard){
-                                if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
-                                    perror("IPC send failed\n");
-                                    exit(1);
-                                }
-                                k = 0;
-                                setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
-                            }
                         } else {
                             k++;
-                            if(k==maxboard){
-                                if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
-                                    perror("IPC send failed\n");
-                                    exit(1);
-                                }
-                                k = 0;
-                                setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
+                        }
+                        if(k==maxboard){
+                            if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
+                                perror("IPC send failed\n");
+                                exit(1);
                             }
+                            k = 0;
+                            setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
                         }
                     }
                     

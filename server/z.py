@@ -170,6 +170,7 @@ def uploadCommands2():
 
 
 def shutdown():
+	d.connect()
 	d.shutdown()
 	
 	
@@ -590,6 +591,113 @@ def pingSafely():
 	saveData("pingTest1")
 
 
+def pingMaskTest():
+	d.connect()
+	unmask()
+	
+	def uploadPingDelaysAll():
+	
+		chargetime = 500*np.ones(MAIZEBOARDS*32)
+		#~ chargetime[128:] = 0
+			
+		for mother in range(0,MAIZEBOARDS):
+			b.select_motherboard(mother)
+			chanset = np.asarray(range(0,32))+mother*32 
+			b.set_chipmem_wloc(0)
+			b.write_array_pattern_16bit(chargetime[chanset])
+			for mm in range(1,501):
+				b.set_chipmem_wloc(mm)
+				b.write_array_pattern_16bit(chargetime[chanset])
+	
+	def uploadPingCommandsAll():
+		b.stop_execution()
+		
+		b.set_imem_wloc(0)
+		a.loadincr_chipmem(1,0)
+		a.wait(1)
+		a.set_amp(0)
+		a.wait(1)
+		a.loadincr_chipmem(1,0)
+		a.wait(1)
+		a.set_phase(0)
+		a.wait(1)
+		a.fire(0)
+		
+		a.set_trig(15) # [ 0 0 0 0 ] 2^3 + 2^2 + 2^1 + 2^0
+		a.waitsec(5e-6)
+		a.set_trig(0)
+		a.waitsec(50e-6)
+		a.halt()
+		
+	
+	uploadPingDelaysAll()
+	uploadPingCommandsAll()
+	
+	d.resetVars()
+	
+	pack_size = 1024
+	timeOut = 100
+	PRF = 20
+	npulses = 64
+	recLen = 2048*2
+	
+	d.setTrigDelay(100)
+	d.setRecLen(recLen)
+	d.setPacketSize(pack_size)
+	d.setTimeout(timeOut)
+	d.setDataSize(1,1,1)
+	d.allocateMemory()
+	d.dataAcqStart(1)
+	
+	
+	tt = np.zeros(npulses)
+	for plsn in range(0,npulses):
+		t0 = time.time()
+		
+		cmask = np.zeros(64).astype(int)
+		cmask[plsn] = 1
+			
+		if np.mod(plsn,64) == 63:	
+			mst = 2
+		else:
+			mst = 1
+			
+			
+		d.setAcqIdx(0,0,0)
+		
+		for bdn in range(0,RECVBOARDS):
+			d.setChannelMask(cmask[bdn*8+0:bdn*8+4],cmask[bdn*8+4:bdn*8+8],bdn,mst)
+		time.sleep(0.3e-3)
+		
+		b.go()
+		#~ time.sleep(1.0e-3)
+		d.ipcWait()
+		if mst == 2:
+			cc = d.getData(RECVBOARDS)
+			
+		dt = time.time()-t0
+		
+		if dt<(1.0/PRF):
+			time.sleep(1.0/PRF-dt)
+		tt[plsn] = (time.time()-t0)
+	cmask[:]=1	
+	wf = bsortData(cc,recLen,1,1,1)[0,0,0,:,:]	
+		#~ print 'time =',(time.time()-t0)*1e3,'ms'
+	print '\navg time: ',np.round(np.mean(tt)*1e3,1),'+-',np.round(np.std(tt)*1e3,1)
+	print 'PRF =', np.round(1.0/np.mean(tt),1)
+	print 'min/max times:', np.round(np.min(tt)*1e3,1),'  -  ',np.round(np.max(tt)*1e3,1),'\n\n'
+	for m in range(0,64):
+		print m, np.round(np.mean(wf[:,m]),2)
+		plt.plot(wf[:,m]+ m*270)
+		
+	for bdn in range(0,RECVBOARDS):
+		d.setChannelMask(cmask[0:4],cmask[4:],bdn,0x00000000)
+	plt.show()	
+	time.sleep(1)
+	d.setTimeout(5e6)
+	d.disconnect()
+	
+	
 def steerSafelyPlotWF():
 		
 	recLen = 2048

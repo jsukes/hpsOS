@@ -227,16 +227,13 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
                         if(pipemsg[1] == 1){
                             printf("dataAcqGo set to 1\n");
 							dataGo = 1;
-                            DREF(FPGA.stateReset) = 1; 
-                            DREF(FPGA.read_addr) = 0;
-                            DREF(FPGA.stateReset) = 0;
 						} else {
                             printf("dataAcqGo set to 0\n");
 							dataGo = 0;
-                            DREF(FPGA.stateReset) = 1; 
-                            DREF(FPGA.read_addr) = 0;
-                            DREF(FPGA.stateReset) = 0;
 						}
+                        DREF(FPGA.stateReset) = 1; 
+                        DREF(FPGA.read_addr) = 0;
+                        DREF(FPGA.stateReset) = 0;
 						break;
 					}
     
@@ -249,7 +246,8 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
                     case(CASE_MASKCHANNELS):{
                         mask1 = pipemsg[1];
                         mask2 = pipemsg[2];
-                        maskState = (int )(pipemsg[3] & 0x000000ff);
+                        maskState = pipemsg[3] & 0x000000ff;
+                        //write(sv,maskState,sizeof(uint32_t));
                         break;
                     }
  
@@ -282,7 +280,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
                             datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
                             datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
                         }
-                        write(sv,datatmp,sizeof(uint32_t));
+                        write(sv,&datatmp[0],sizeof(uint32_t));
 
                     } else {
                         for(n=0;n<recLen;n++){
