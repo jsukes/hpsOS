@@ -56,7 +56,7 @@
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
 #define CASE_SETPACKETSIZE 11
-#define CASE_MASKCHANNELS 13
+#define CASE_MASKRECVCHANNELS 13
 #define CASE_KILLPROGRAM 17
 
 int RUN_MAIN = 1;
@@ -119,7 +119,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 
                 if( nrecv == 0 ){
 					RUN_MAIN = 0;
-					enetmsg[0] = 3;
+					enetmsg[0] = 8;
 				}
 				
                 if( enetmsg[0]<CASE_KILLPROGRAM ){

@@ -243,11 +243,11 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
                         break;
                     }
 
-                    case(CASE_MASKCHANNELS):{
+                    case(CASE_MASKRECVCHANNELS):{
                         mask1 = pipemsg[1];
                         mask2 = pipemsg[2];
                         maskState = pipemsg[3] & 0x000000ff;
-                        //write(sv,maskState,sizeof(uint32_t));
+                        write(sv,&maskState,sizeof(uint32_t));
                         break;
                     }
  
@@ -261,7 +261,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 				}
 			}
 	
-		} else if ( nready == 0 ){ // && dataGo == 1 ){ // if select loop times out, check for data
+		} else if ( nready == 0 ){ // if select loop times out, check for data
             if( dataGo == 1 ){
                 if ( DREF(FPGA.transReady) == 1 ){
                     if( maskState == 0 ){

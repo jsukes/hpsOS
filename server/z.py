@@ -25,7 +25,7 @@ a = a_funcs(x)
 b = b_funcs(x)
 b.stop()
 d = dataServer()
-d.connect()
+#~ d.connect()
 
 els = np.array([8, 10, 12, 15, 18, 23, 34, 38,		# board 1 (top, stack 1)
 			40, 44, 48, 50, 56, 61, 68, 78,		 
@@ -637,7 +637,7 @@ def pingMaskTest():
 	
 	pack_size = 1024
 	timeOut = 100
-	PRF = 20
+	PRF = 200
 	npulses = 64
 	recLen = 2048*2
 	
@@ -654,24 +654,19 @@ def pingMaskTest():
 	for plsn in range(0,npulses):
 		t0 = time.time()
 		
-		cmask = np.zeros(64).astype(int)
-		cmask[plsn] = 1
+		rcvmask = np.zeros(8*RECVBOARDS).astype(int)
+		rcvmask[plsn] = 1
 			
 		if np.mod(plsn,64) == 63:	
 			mst = 2
 		else:
 			mst = 1
-			
-			
-		d.setAcqIdx(0,0,0)
-		
-		for bdn in range(0,RECVBOARDS):
-			d.setChannelMask(cmask[bdn*8+0:bdn*8+4],cmask[bdn*8+4:bdn*8+8],bdn,mst)
-		time.sleep(0.3e-3)
-		
+						
+		d.setAcqIdx(0,0,0)		
+		d.setChannelMask(rcvmask,mst)
 		b.go()
-		#~ time.sleep(1.0e-3)
 		d.ipcWait()
+		
 		if mst == 2:
 			cc = d.getData(RECVBOARDS)
 			
@@ -682,7 +677,7 @@ def pingMaskTest():
 		tt[plsn] = (time.time()-t0)
 	cmask[:]=1	
 	wf = bsortData(cc,recLen,1,1,1)[0,0,0,:,:]	
-		#~ print 'time =',(time.time()-t0)*1e3,'ms'
+	
 	print '\navg time: ',np.round(np.mean(tt)*1e3,1),'+-',np.round(np.std(tt)*1e3,1)
 	print 'PRF =', np.round(1.0/np.mean(tt),1)
 	print 'min/max times:', np.round(np.min(tt)*1e3,1),'  -  ',np.round(np.max(tt)*1e3,1),'\n\n'
@@ -690,8 +685,6 @@ def pingMaskTest():
 		print m, np.round(np.mean(wf[:,m]),2)
 		plt.plot(wf[:,m]+ m*270)
 		
-	for bdn in range(0,RECVBOARDS):
-		d.setChannelMask(cmask[0:4],cmask[4:],bdn,0x00000000)
 	plt.show()	
 	time.sleep(1)
 	d.setTimeout(5e6)

@@ -387,12 +387,15 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
                         case(CASE_SETCHANNELMASK):{
-                            if( (fmsg.msg[3] & 0x000000ff) == 1 ){
-                                dataMaskWait = 1;
-                            } else {
-                                dataMaskWait = 0;
-                            }
+                            /* if statement note:
+                                the python dataServer mask function requires confirmation from the cServer/client that the mask was written before program can continue, which is a single integer as a return value.
+                                but setting dataMask = 0 will make the cServer wait until recLen data is collected, which means if you explicitly set the mask to 0 from python, the program will hang. the problem is
+                                that the client needs to know the mask is set to 0 to function properly. the work around is to set the mask = 0 from python, let the cServer forward that to the clients, then change
+                                the mask to 2 in the cServer. when the mask is set to 2 in the cServer the cServer waits for the confirmation message from the clients, then sets the mask back to 0. a little round 
+                                about, but it works */
+                            dataMaskWait = (fmsg.msg[3] & 0x000000ff);
                             sendENETmsg(&ENET,fmsg.msg,maxboard);
+                            if(dataMaskWait == 0) dataMaskWait = 2; 
                             break;
                         } 
                         case(CASE_SHUTDOWNSERVER):{ // close server
@@ -452,6 +455,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             }
                             k = 0;
                             setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int)); 
+                            if(dataMaskWait == 2) dataMaskWait = 0;
                         }
                     }
                     
