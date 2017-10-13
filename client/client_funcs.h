@@ -275,22 +275,60 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
                         }
 
                     } else if ( maskState == 1 ){
-                        for(n=0;n<recLen;n++){
-                            DREF(FPGA.read_addr) = n;
-                            datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
-                            datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
-                        }
+						if( ( mask1 | mask2 ) == 0 ){
+							;
+						} else if ( mask1 == 0 ){
+							for(n=0;n<recLen;n++){
+								DREF(FPGA.read_addr) = n;
+								datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
+							}	
+						} else if ( mask2 == 0 ){
+							for(n=0;n<recLen;n++){
+								DREF(FPGA.read_addr) = n;
+								datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
+							}	
+						} else {
+							for(n=0;n<recLen;n++){
+								DREF(FPGA.read_addr) = n;
+								datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
+								datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
+							}
+						}
                         write(sv,&datatmp[0],sizeof(uint32_t));
 
                     } else {
-                        for(n=0;n<recLen;n++){
-                            DREF(FPGA.read_addr) = n;
-                            datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
-                            datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
-                            if((n%packetsize) == (packetsize-1)){
-                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
-                            }
-                        }
+						if( ( mask1 | mask2 ) == 0 ){
+							for(n=0;n<recLen;n++){
+	                            if((n%packetsize) == (packetsize-1)){
+	                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
+	                            }
+							}
+						} else if ( mask1 == 0 ){
+							for(n=0;n<recLen;n++){
+								DREF(FPGA.read_addr) = n;
+								datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
+								if((n%packetsize) == (packetsize-1)){
+	                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
+	                            }
+							}	
+						} else if ( mask2 == 0 ){
+							for(n=0;n<recLen;n++){
+								DREF(FPGA.read_addr) = n;
+								datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
+								if((n%packetsize) == (packetsize-1)){
+	                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
+	                            }
+							}	
+						} else {
+							for(n=0;n<recLen;n++){
+								DREF(FPGA.read_addr) = n;
+								datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
+								datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
+								if((n%packetsize) == (packetsize-1)){
+	                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
+	                            }
+							}
+						}
                     }
                     DREF(FPGA.stateReset) = 1; 
                     DREF(FPGA.read_addr) = 0;
