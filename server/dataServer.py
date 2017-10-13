@@ -38,7 +38,7 @@ class dataServer():
 			print 'Record Length less than previous packet size, packet size set to record length (', self.packetSize,')'
 			time.sleep(0.05)
 			
-	def setPacketSize(self,ps):
+	def setENETPacketSize(self,ps):
 		# sets the size of the packets to be sent over ethernet from the socs. takes integer 'ps' as input, units = bytes. should be a power of two, must be an even divisor of the record length.
 		if (ps > 0) and (ps <= self.recLen):
 			self.packetSize = ps
@@ -53,7 +53,7 @@ class dataServer():
 		self.ff.write(msg)
 		time.sleep(0.05)
 			
-	def setTimeout(self,to):
+	def setSocTransReadyTimeout(self,to):
 		# sets how often the SoCs check whether they have data ready to transmit. takes integer 'to' as input, units = us. lower values make the SoC check more often but put it into more of a busy wait state which burns cpu time. should be set as high as possible without slowing down the program.
 		if (to>=TRANS_READY_TIMEOUT_MIN):
 			self.timeOut = to
@@ -63,20 +63,8 @@ class dataServer():
 		msg = struct.pack(self.cmsg,2,self.timeOut,0,0,"")
 		self.ff.write(msg)
 		time.sleep(0.05)
-
-	def setDataAcqMode(self,dam):
-		# this does nothing at the moment, just leave it as 0
-		if (dam == 0) or (dam == 1):
-			self.dataAcqMode = dam
-		else:
-			self.dataAcqMode = 0
-			print 'Invalid Data Acquisition Mode, defaulting to 0. [ Must be 0 or 1 ]. May cause run-time problems, proceed with caution.'
-			
-		msg = struct.pack(self.cmsg,3,self.dataAcqMode,0,0,"")
-		self.ff.write(msg)
-		time.sleep(0.05)
 		
-	def setDataSize(self,l1,l2,l3):
+	def setDataArraySize(self,l1,l2,l3):
 		# used to define the amount of data that will be collected during the experiment. takes integer values 'l1','l2', and 'l3' as input, unitless. memory must be allocated in the cServer before data acquisition begins. data is stored in a 5D array of size [l1,l2,l3,recLen,elementN], these values give the size of the first 3 dimensions of the data array.
 		if ( l1 > 0 ) and ( l2 > 0 ) and ( l3 > 0 ):
 			self.l1, self.l2, self.l3 = l1,l2,l3
@@ -87,13 +75,13 @@ class dataServer():
 		self.ff.write(msg)
 		time.sleep(0.05)
 		
-	def allocateMemory(self):
+	def allocateDataArrayMemory(self):
 		# once all of the data size variables have been set, this tells the cServer to allocate the memory for the data to be acquired
 		msg = struct.pack(self.cmsg,5,1,0,0,"")
 		self.ff.write(msg)
 		time.sleep(0.05)
 		
-	def dataAcqStart(self,da):
+	def toggleDataAcq(self,da):
 		# this tells the cServer/SoCs whether or not to acquire data. takes integer 'da' as input
 		# da = 0 -> don't acquire data
 		# da = 1 -> acquire data
@@ -106,7 +94,7 @@ class dataServer():
 		self.ff.write(msg)
 		time.sleep(0.05)
 
-	def setAcqIdx(self,id1,id2,id3):
+	def declareDataAcqIdx(self,id1,id2,id3):
 		# this tells the cServer where to store the incoming data after each pulse, needs to be set explicitly before each pulse. takes integer values 'id1','id2' and 'id3' as inputs, which are the array array indices into which the cServer will put the acquired data. eg, if your experiment were steering to N locations, treating each location with M pulses, and using K different charge times, you would tell the cServer, "this pulse corresponds to location 'n', pulse 'm', charge time 'k'", and it would put that data into the array at the corresponding location. if you don't set this variable each time, the cServer will just overwrite the values stored memory location [0,0,0] after each pulse
 		if (id1 >= 0) and (id1 < self.l1) and (id2 >= 0) and (id2 < self.l2) and (id3 >= 0) and (id3 < self.l3):
 			self.id1,self.id2,self.id3 = id1,id2,id3

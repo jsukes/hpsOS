@@ -23,29 +23,28 @@
 #define IPCSOCK "./lithium_ipc"
 #define MAX_RECLEN 8192
 
-#define CASE_TRIGDELAY 0
-#define CASE_RECLEN 1
-#define CASE_TRANSREADY_TIMEOUT 2
-#define CASE_DATAACQMODE 3
-#define CASE_ARRAYSIZE 4
-#define CASE_ALLOCMEM 5
-#define CASE_DATAGO 6
-#define CASE_SETINDEX 7
+#define CASE_SET_TRIGGER_DELAY 0
+#define CASE_SET_RECORD_LENGTH 1
+#define CASE_SET_SOC_TRANSMIT_READY_TIMEOUT 2
+#define CASE_SET_CSERVER_DATA_ARRAY_SIZE 4
+#define CASE_ALLOCATE_CSERVER_DATA_ARRAY_MEM 5
+#define CASE_TOGGLE_DATA_ACQUISITION 6
+#define CASE_DECLARE_CSERVER_DATA_ARRAY_INDEX 7
 #define CASE_CLOSE_PROGRAM 8
-#define CASE_RESETGLOBALVARS 9
-#define CASE_SAVEDATA 10
-#define CASE_SETPACKETSIZE 11
-#define CASE_SENDDATAIPC 12
-#define CASE_SETCHANNELMASK 13
-#define CASE_SHUTDOWNSERVER 17
+#define CASE_RESET_GLOBAL_VARIABLES 9
+#define CASE_SAVE_CSERVER_DATA 10
+#define CASE_SET_ENET_PACKETSIZE 11
+#define CASE_SEND_CSERVER_DATA_IPC 12
+#define CASE_SET_CHANNEL_MASK 13
+#define CASE_SHUTDOWN_SERVER 17
 
 const int ONE = 1;  // need to have a variable that can be pointed to that always equals '1' for some of the socket options
 
 // global variables to keep track of runtime things
-unsigned long g_dataAcqMode, g_trigDelay, g_pollTime;
-unsigned long g_recLen, g_packetsize;
-unsigned long g_idx1len,g_idx2len,g_idx3len;
-unsigned long g_id1,g_id2,g_id3;
+unsigned long g_trigDelay, g_socTransReadyTimeout;
+unsigned long g_recLen, g_enetPacketSize;
+unsigned long g_idx1len, g_idx2len, g_idx3len;
+unsigned long g_id1, g_id2, g_id3;
 
 struct ENETsock{ // structure to store variables associated with ethernet connection
     int sockfd;                 // file descriptor (fd) of the server socket listening for new connections
@@ -141,8 +140,7 @@ void setupENETserver(struct ENETsock *ENET){ // function to set up ethernet sock
 
 
 void resetGlobalVars(){ // function to reset all global variables, global variables are prepended with 'g_'
-    g_dataAcqMode = 0;
-    g_recLen = 2048; g_packetsize = 2048; g_trigDelay = 0; g_pollTime = 500;
+    g_recLen = 2048; g_enetPacketSize = 2048; g_trigDelay = 0; g_socTransReadyTimeout = 500;
     g_idx1len = 1; g_idx2len = 1; g_idx3len = 1;
     g_id1 = 0; g_id2 = 0; g_id3 = 0;
 }
@@ -195,16 +193,16 @@ void resetFPGAdataAcqParams(struct ENETsock *ENET, unsigned long maxboard){ // f
     /* function makes a message variable, populates it with the default data acquisition variables, and sends it to the SoCs*/
     uint32_t fmsg[4] ={0};
 
-    fmsg[0] = CASE_DATAGO; fmsg[1] = 0;
+    fmsg[0] = CASE_TOGGLE_DATA_ACQUISITION; fmsg[1] = 0;
     sendENETmsg(ENET,fmsg,maxboard);
     
-    fmsg[0] = CASE_TRIGDELAY; fmsg[1] = g_trigDelay;
+    fmsg[0] = CASE_SET_TRIGGER_DELAY; fmsg[1] = g_trigDelay;
     sendENETmsg(ENET,fmsg,maxboard);
     
-    fmsg[0] = CASE_RECLEN; fmsg[1] = g_recLen;
+    fmsg[0] = CASE_SET_RECORD_LENGTH; fmsg[1] = g_recLen;
     sendENETmsg(ENET,fmsg,maxboard);
     
-    fmsg[0] = CASE_TRANSREADY_TIMEOUT; fmsg[1] = g_pollTime;
+    fmsg[0] = CASE_SET_SOC_TRANSMIT_READY_TIMEOUT; fmsg[1] = g_socTransReadyTimeout;
     sendENETmsg(ENET,fmsg,maxboard);
 }
 
@@ -265,13 +263,13 @@ int main(int argc, char *argv[]) { printf("into main!\n");
         if( nready > 0 ){
 
             // FIFO message handler 
-            if( FD_ISSET(fifofd, &readfds) ){ // checks if 'fifofd' is one of the ready fds in 'readfds'
+            if( FD_ISSET(fifofd, &readfds) ){ 
                 /* The FIFO is used to handle all incoming messages from the user interface (python) 
                     all messages from (python) contain two fields 'msg' and 'buff' ( given in struct FIFOmsg )
                     - 'msg' is a 4-element array of type uint32_t
                     - 'buff' is a character array with 100 elements (primarily/only used to declare the file name when saving data)
                     - msg[0] is a number representing the name of the command given by the 'CASE_...' definitions above
-                    - msg[1] and msg[2] are 32-bit numerical arguments/values passed to the given command (eg for msg[0] = CASE_TRIGDELAY, msg[1] = trigDelay)
+                    - msg[1] and msg[2] are 32-bit numerical arguments/values passed to the given command (eg for msg[0] = CASE_SET_TRIGGER_DELAY, msg[1] = trigDelay)
                     - msg[3] is a 32-bit number, but for commands which are forwarded over ethernet to the SoCs it is broken up into four 8-bit fields
                         - msg[3] -> bits[31:24] - tells cServer to send message to all boards, or one board at a time
                         - msg[3] -> bits[23:16] - data to be sent
@@ -294,15 +292,21 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                 } else {
                     switch(fmsg.msg[0]){ // msg[0] contains the command code for the message
                         /* switch statement notes:
-                            - If msg[0] doesn't equal one of the defined CASE_...'s, the server shuts down ('default' case)
+                            - If msg[0] doesn't equal one of the defined CASE's, the server shuts down ('default' case)
                             - All messages which change data acquisition variables write the recv'd values into the corresponding global variable in the cServer
-                            - If recv'd values in msg[1]-msg[3] are illegal (ie trigDelay < 0), they are instead set to their default values
-                                - If recLen is less than packetsize, packetsize get overwritten as recLen
-                            - After all messages that change the size of data to be acquired you need to call CASE_ALLOCMEM to resize the storage variable
+                            - If recv'd values in msg[1]-msg[3] are illegal (eg trigDelay < 0), they are instead set to their default values
+                                - If recLen is less than the enet packetsize, enet packetsize get overwritten as recLen
+                            - After all messages that change the size of data to be acquired you need to call CASE_ALLOCATE_CSERVER_DATA_ARRAY_MEM to resize the storage variable in the cServer. No dynamic memory allocation
                             - All cases need to 'break' out of the 'switch' statement when they're done, else the switch statement will execute the 'default' case at the end and shut down the server
                         */
 
-                        case(CASE_TRIGDELAY):{ // sets trigDelay
+                        case(CASE_SET_TRIGGER_DELAY):{ 
+                            /* this sets the time delay between when the FPGA gets the trigger, and when the acquisition begins
+                                notes on variables in fmsg
+                                - msg[1] contains the trigDelay value to be transmitted to the SoCs
+                                - msg[2] and buff are not used
+                                - msg[3] contains no data, but can be set to allow independent trigger timings to be sent to each *board*. (see sendENETmsg function)
+                             */
                             if(fmsg.msg[1] > 0){
                                 g_trigDelay = fmsg.msg[1];
                                 sendENETmsg(&ENET,fmsg.msg,maxboard);
@@ -316,16 +320,23 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_RECLEN):{ // set recLen
+                        case(CASE_SET_RECORD_LENGTH):{ 
+                            /* This sets the length of the array into which data will be stored, NOT the time duration of the acquisition
+                                notes on variables in fmsg
+                                - msg[1] contains the record length of the data to be transmitted to the SoCs
+                                - msg[2] and buff are not used
+                                - msg[3] contains no data. record lengths cannot be independently set on the boards. any attempts to do so are overwritten
+                             */
+                            fmsg.msg[3] = 0;
                             if(fmsg.msg[1] > 0 && fmsg.msg[1] < MAX_RECLEN){
                                 g_recLen = fmsg.msg[1];
                                 sendENETmsg(&ENET,fmsg.msg,maxboard);
                                 printf("recLen set to: %lu\n\n",g_recLen);
-                                if(g_recLen < g_packetsize){
-                                    g_packetsize = g_recLen;
-                                    fmsg.msg[0] = CASE_SETPACKETSIZE;
+                                if(g_recLen < g_enetPacketSize){
+                                    g_enetPacketSize = g_recLen;
+                                    fmsg.msg[0] = CASE_SET_ENET_PACKETSIZE;
                                     sendENETmsg(&ENET,fmsg.msg,maxboard);
-                                    printf("packetsize set to: %lu\n",g_packetsize);
+                                    printf("packetsize set to: %lu\n",g_enetPacketSize);
                                 }
                             } else {
                                 printf("invalid recLen, reseting global variables\n"); 
@@ -338,27 +349,29 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_TRANSREADY_TIMEOUT):{ // change FPGA data timeout
+                        case(CASE_SET_SOC_TRANSMIT_READY_TIMEOUT):{ 
                             /* This changes how often the SoC checks to see whether data is ready to transmit to the cServer.
-                                - Lower values make the SoC check for data more often, but put it closer to a busy wait state and burn CPU.
-                                - Minimum value allowed is 10us
+                                notes on variables in fmsg
+                                - msg[1] contains the transReadyTimeout value
+                                    - Lower values make the SoC check for data more often, but put it closer to a busy wait state and burn CPU time
+                                    - Minimum value allowed is 10us
+                                    - Recommend setting as high as possible without sacrificing performance
+                                - msg[2] and buff not used
+                                - msg[3] contains no data, but can be set to allow independent transReadyTimeouts to be set on each *board* (see sendENETmsg function). may adversly effect performance.
                             */
-                            g_pollTime = fmsg.msg[1];
+                            g_socTransReadyTimeout = fmsg.msg[1];
                             sendENETmsg(&ENET,fmsg.msg,maxboard);
-                            printf("polltime set to: %lu\n\n",g_pollTime);
+                            printf("polltime set to: %lu\n\n",g_socTransReadyTimeout);
                             break;
                         }
 
-                        case(CASE_DATAACQMODE):{ // set dataAcq mode
-                            /* This does nothing for the time being, but may eventually allow to run using dynamic memory allocation */
-                            g_dataAcqMode = fmsg.msg[1];
-                            printf("data Acq Mode set to: %lu\n\n",g_dataAcqMode);
-                            break;
-                        }
-
-                        case(CASE_ARRAYSIZE):{ // set variables needed to allocate memory for data
-                            /* data is essentially a 5D array with size data = [g_idx1len, g_idx2len, g_idx3len, recLen, elementN]
-                                this sets the size of the first 3 dimensions of the array
+                        case(CASE_SET_CSERVER_DATA_ARRAY_SIZE):{ 
+                            /* 'data' is stored in the cServer in what amounts to a 5D array with size = [g_idx1len, g_idx2len, g_idx3len, 2*recLen, Nboards]
+                                this sets the size of the first 3 dimensions of that array so the cServer can allocate the required memory for data acquisition
+                                notes on variables in fmsg
+                                - msg[1], msg[2], and msg[3] contain the length of the of the first, second, and third dimensions of the array, respectively
+                                - buff is not used
+                                - values of 0 are allowed to be set when calling this function, but the allocation requires that they be overwritten with '1', doesn't effect anything on the user side to do this.
                             */
                             g_idx1len = ( 1 > fmsg.msg[1] ) ? 1 : fmsg.msg[1];
                             g_idx2len = ( 1 > fmsg.msg[2] ) ? 1 : fmsg.msg[2];
@@ -367,7 +380,15 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_ALLOCMEM):{ // allocate/free memory for data and start/end data acquisition on FPGAs
+                        case(CASE_ALLOCATE_CSERVER_DATA_ARRAY_MEM):{ 
+                            /* this allocates/frees memory for data acquisition on the cServer. this is separate from the other functions because it should only be called once,
+                                after the size of the data array has been set, to prevent tons of calls to 'realloc'.
+                                notes on variables in fmsg
+                                - msg[1] tells the cServer to allocate the memory. 
+                                    - the user doesn't have to input a value, it should be set equal to '1' in the calling function from the UI.
+                                    - if not though, the data array is deleted and a new one is allocated to the default size.
+                                - msg[2], msg[3], and buff are not used.
+                            */
                             if(fmsg.msg[1] == 1){
                                 for(n=0;n<maxboard;n++)
                                     m = (ENET.clifd[n] > maxboard) ? ENET.clifd[n] : maxboard;
@@ -381,7 +402,15 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_DATAGO):{ // tells the SoC whether to be in a data acquisition mode or not
+                        case(CASE_TOGGLE_DATA_ACQUISITION):{ 
+                            /* tells the SoC whether to be in a data acquisition mode or not 
+                                notes about variables in fmsg
+                                - msg[1] is the toggle state, '1' puts the SoC into a state to acquire data. any other value puts it into a state to NOT acquire data
+                                - msg[2] and buff are not used
+                                - msg[3] is currently (10/13) unused, but could be set to toggle the acq state of individual boards (see sendENETmsg). May be incorporated in the future.
+                                    -The cServer can't handle this currently so msg[3] is set to zero to prevent it from trying. 
+                            */
+                            fmsg.msg[3] = 0;
                             if(fmsg.msg[1] == 1){
                                 dataAcqGo = fmsg.msg[1];
                                 sendENETmsg(&ENET,fmsg.msg,maxboard);
@@ -395,8 +424,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_SETINDEX):{ // declare index to place acquired data
-                            /* the location in the data array to store the data must be set prior to every data acquisition event/pulse. this is where you set that.*/ 
+                        case(CASE_DECLARE_CSERVER_DATA_ARRAY_INDEX):{ 
+                            /* This function is used to tell the cServer where the next round of incoming data should be placed in the data array. index must be declared prior to every data acquisition event/pulse.
+                                notes on variables in fmsg:
+                                - msg[1], msg[2], and msg[3] are the index locations where the acquired data will be stored in the data array
+                                - buff is unused
+                            */ 
                             if(fmsg.msg[1]>=0 && fmsg.msg[2]>=0 && fmsg.msg[3]>=0){
                                 g_id1 = fmsg.msg[1];
                                 g_id2 = fmsg.msg[2];
@@ -408,13 +441,25 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_CLOSE_PROGRAM):{ // close the SoC
+                        case(CASE_CLOSE_PROGRAM):{ 
+                            /* This function shuts down the SoCs but leaves the cServer running.
+                                notes on variables in fmsg:
+                                - msg[1], msg[2], msg[3]*, and buff are unused.
+                                
+                                * as of now (10/13/2017) msg[3] is overwritten as 0 to broadcast this command to all connected boards. The cServer can handle disconnects and reconnects
+                                    in the middle of operation pretty efficiently, but the front end programming in the UI to do it would be kind of messy, and the reconnection process 
+                                    isn't automated on a per board level yet, so i just disabled the option. may be incorporated in the future though.
+                            */
+                            fmsg.msg[3] = 0;
                             sendENETmsg(&ENET,fmsg.msg,maxboard);
                             printf("shutting down FPGAs\n");
                             break;
                         }
 
-                        case(CASE_RESETGLOBALVARS):{ // reset global variables
+                        case(CASE_RESET_GLOBAL_VARIABLES):{
+                            /* This function resets all variables to their defaults. 
+                                all variables in fmsg are unused.    
+                            */
                             resetGlobalVars();
                             k = 0;
                             resetFPGAdataAcqParams(&ENET,maxboard);
@@ -424,7 +469,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_SAVEDATA):{ // save data to binary file
+                        case(CASE_SAVE_CSERVER_DATA):{
+                            /* This function is used to save the acquired data in the 'data' array into a binary file
+                                notes on variables in fmsg:
+                                - msg[1], msg[2], and msg[3] are unused
+                                - buff contains the name of the file to save the data in. (the string in 'buff' is limited to 100 characters)
+                            */ 
                             FILE *datafile = fopen(fmsg.buff,"wb"); 
                             fwrite(data,sizeof(uint32_t),maxboard*g_idx1len*g_idx2len*g_idx3len*2*g_recLen,datafile);
                             fclose(datafile);
@@ -432,19 +482,39 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;                            
                         }
 
-                        case(CASE_SETPACKETSIZE):{ // sets the size of the packets that the SoCs will transmit over ethernet when they have data
-                            /* packetsize must be: 
-                                - greater than 0
-                                - less than or equal to the record length of data
-                                - an even divisor of the record length
-                                - highly recommended that this be a power of 2
+                        case(CASE_SET_ENET_PACKETSIZE):{ 
+                            /* This function sets the size of the packets the SoC will transmit to the cServer over ethernet.
+                                notes on variables in fmgs:
+                                - msg[1] is the packet size, must be: 
+                                    - greater than 0
+                                    - less than or equal to the record length of data
+                                    - an even divisor of the record length
+                                    - highly recommended that this be a power of 2
+                                - msg[2] and buff are unused
+                                - this value should be the same on all boards, so msg[3] is set to 0 to prevent different boards from trying to send different sized packets
+
+                                Additional and important note on the packetsize. Because the slow bridge is so slow at transferring data from the FPGA to the SoC, as the record length is increased
+                                the SoC essentially does nothing but wait for data, which slows down everything. to get around the slow bridge as much as possible, the solution is to send what data
+                                has already been written to the SoC from the FPGA to the cServer over enet as often as possible. the packet size variable basically tells the SoC how often to interrupt
+                                the transfer of data over the slow bridge and send the already-acquired data over ethernet to the cServer. ex. it takes ~1ms for the SoC to acquire 1000 data points
+                                worth of data from the FPGA over the slow bridge, but only ~10us to put that data into the enet write buffer once the SoC has it. So for a record length of 4096, the
+                                slow bridge would nominally take 4.1ms to transfer the data to the SoC, during which time nothing else happens, and another ~40us to put it in the write buffer at the end.
+                                Not counting how long it takes to transfer all that data over ethernet to the cServer, that puts us at 4.5ms, which is ~220Hz PRF. In reality though, since it takes time
+                                to transfer data over ethernet, and multiple boards would want to transfer all of their data at once if they only transfered at the end of the acquisition, a log jam of data
+                                would flood the enet pipes and slow everythin down. this is bad because 1) we need to go fast (we promised FUSF real time functionalitly, generally best to deliver on what
+                                you promise, especially to the people with money) and 2) all data needs to be transfered to the cServer after every acquisition in order to synchronize the transmit and 
+                                receive systems to ensure data fidelity because the receive system will begin acquiring new data when it receives the next trigger, even it isn't finished acquiring the
+                                last set of data. By breaking the data up into smaller packets, there's less of a log jam in the ethernet pipes, and the SoCs can utilize the 'dead' time while data is
+                                transfered over the slow bridge. All that said, ethernet is more efficient at sending larger packets than smaller ones so keep the packet size big if you can, up to
+                                4096 bytes (which is a 1024-element array of type uint32_t). Larger packet sizes will require multiple calls to the write buffer and actually slow things back down.
                             */
+                            fmsg.msg[3] = 0;
                             if( ( fmsg.msg[1]>0 ) && ( fmsg.msg[1]<=g_recLen ) && ( g_recLen%fmsg.msg[1] == 0 ) ){
-                                g_packetsize = fmsg.msg[1];
-                                printf("packet size set to %lu\n",g_packetsize);
+                                g_enetPacketSize = fmsg.msg[1];
+                                printf("packet size set to %lu\n",g_enetPacketSize);
                                 sendENETmsg(&ENET,fmsg.msg,maxboard);
                             } else {
-                                g_packetsize = g_recLen;
+                                g_enetPacketSize = g_recLen;
                                 printf("invalid packet size (%d), set to recLen\n",fmsg.msg[1]);
                                 fmsg.msg[1] = g_recLen;
                                 sendENETmsg(&ENET,fmsg.msg,maxboard);
@@ -452,7 +522,11 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_SENDDATAIPC):{ // send data array to python server
+                        case(CASE_SEND_CSERVER_DATA_IPC):{
+                            /* This function sends the entire 'data' array directly to the python UI 
+                                notes on variables in fmgs:
+                                - msg[1], msg[2], msg[3], and buff are unused    
+                            */
 							if(send(IPC.clifd,data,sizeof(uint32_t)*maxboard*g_idx1len*g_idx2len*g_idx3len*2*g_recLen,MSG_CONFIRM) == -1){
                                 perror("IPC send failed\n");
                                 exit(1);
@@ -460,26 +534,41 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        case(CASE_SETCHANNELMASK):{ // soc only writes data from unmasked channels into memory, ignores received data from other channels. Allows soc to overwrite channel data in memory before sending it to cServer 
-                            /* setchannelmask note:
-                                the python dataServer mask function requires confirmation from the cServer/client that the mask was written on the SoC before the program can continue. the confirmation message is
+                        case(CASE_SET_CHANNEL_MASK):{ 
+                            /* This function is complicated... it tells the SoCs to only write data from unmasked channels into memory, ignores all data received from other channels, and DONT send the data to the
+                                cServer once the acquisition is done. this allows the soc to overwrite data stored in its memory after each pulse before sending it to the cServer 
+                                note of variables in fmsg:
+                                - msg[1] contains the bit-wise mask for the first four channels connected to the receiver board
+                                - msg[2] contains the bit-wise mask for the second four channels connected to the receiver board
+                                - buff is unused
+                                - msg[3] contains a single 32-bit number, broken up into four 8-bit fields which tell the cServer which board to send the mask to (see sendENETmsg function)
+
+                                note on how this function works:
+                                the python dataServer mask function requires confirmation from the cServer/SoCs that the mask was written to the SoCs before the program can continue. the confirmation message is
                                 a single integer returned from the cServer once all the SoCs have reported back to it that they got the message. however, there is no explicit confirmation mechanism built into the 
                                 cServer/SoCs yet that would allow this to happen 'naturally'. so far, this is the only function that requires such a confirmation message so it's not a priority to 'fix' the issue,
                                 but it does create a 'problem' in the case of the data mask function. the issue is that setting dataMask equal to zero makes the cServer wait until it receives an array of length 
-                                'recLen' from each SoC before it can continue instead of just single integers, which means that if you explicitly set the mask to zero, the program will hang. the client needs to 
-                                know the mask is set to zero to function properly, though, once the mask is turned off. the work around is to set the mask = 0 from python, then let the cServer forward that to the 
-                                clients. once the message is sent to the SoCs, the cServer will then locally set dataMaskWait equal to 2. This puts the cServer into a state where it can listen for the single integer
-                                return value without hanging. the flag '2' in the dataMaskWait state means that the last acquistion was the last one under the mask, and so after the cServer receives messages from
-                                the SoCs while in dataMaskWait state '2', it sets dataMaskWait equal to zero locally. in this round about way, dataMaskWait is set to zero everywhere without breaking the normal
-                                operation of the cServer.*/
+                                'recLen' from each SoC before it can continue operations, if you explicitly set the mask to zero though, the SoCs will respond with a single int, and the python UI will wait to hear
+                                back from the cServer that it got the reply. this will make the program will hang because cServer won't transmit to python until it gets 'recLen' data from the SoCs, and python won't
+                                fire the array until it gets the single integer response. the mask needs to be set to zero, however, for the client needs to function properly in the unmasked/mask off state. the work 
+                                around is to set the mask = 0 from the python UI, then let the cServer forward that to the SoCs to turn off the masks on the client end. once that message is sent to the SoCs, the
+                                cServer locally sets dataMaskWait equal to 2. This puts the cServer into a state where it can listen for the single integer return value from the SoCs without hanging. the flag '2' 
+                                in the dataMaskWait state means that the previous acquistion was the last one under the mask, and so after the cServer receives the reply messages from the SoCs while in dataMaskWait 
+                                state '2', it locally sets dataMaskWait back to zero. it doesn't matter whether there was a previous acquisition, and since all masks need to be set on a per pulse basis, setting the
+                                mask back to '0' after setting it to '2' shouldn't effect normal operation of the cServer and in this round about way, dataMaskWait is set to zero everywhere without breaking things.
+                            */
                             dataMaskWait = (fmsg.msg[3] & 0x000000ff);
                             sendENETmsg(&ENET,fmsg.msg,maxboard);
                             if(dataMaskWait == 0) dataMaskWait = 2; 
                             break;
                         } 
 
-                        case(CASE_SHUTDOWNSERVER):{ // close server
-                            fmsg.msg[0]=8;
+                        case(CASE_SHUTDOWN_SERVER):{
+                            /* This shuts down the SoCs and cServer 
+                                note on the variables in fmgs:
+                                - no variables are used. if this command is issued it locally sets all the msg variables to what they need to be to shutdown the sever.
+                            */
+                            fmsg.msg[0]=8; fmsg.msg[3] = 0;
                             sendENETmsg(&ENET,fmsg.msg,maxboard);
                             for(n=0;n<maxboard;n++){
                                 removeClient(&ENET,n);
@@ -490,9 +579,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
                         }
 
-                        default:{ // invalid case, shuts down the cServer
+                        default:{
+                            /* The default action if an undefined CASE value is detected is to and shut down the server
+                                - all variables in fmsg are set locally to shutdown and exit the server
+                             */
                             printf("invalid message, shutting down server\n");
-                            fmsg.msg[0]=8;
+                            fmsg.msg[0]=8; fmsg.msg[3] = 0;
                             sendENETmsg(&ENET,fmsg.msg,maxboard);
                             for(n=0;n<maxboard;n++){
                                 removeClient(&ENET,n);
@@ -506,7 +598,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
         
             // SoC message/data handler 
             for(n=0;n<maxboard;n++){ // loops through all connected SoCs
-                if(FD_ISSET(ENET.clifd[n], &readfds)){ // checks whether connected SoC is one of the ready ones in 'readfds'
+                if(FD_ISSET(ENET.clifd[n], &readfds)){ 
 					
                     // sets the array index where the incoming data will be stored
                     data_idx = (ENET.board[n]-1)*g_idx1len*g_idx2len*g_idx3len*2*g_recLen;
@@ -521,29 +613,29 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         removeClient(&ENET,n);
                     } else {
                         if( dataMaskWait == 0 ){
-                            ENET.p_idx[n] += nrecv/sizeof(uint32_t); // keeps track of how much data each 'read' brought in to update the location index of where to store the next set of incoming data
-                            if(ENET.p_idx[n] == 2*g_recLen){ // after each channel has read in all the data its supposed to for each pulse, p_idx is reset. 'k' is a counter to keep track of how many boards have completed data transfer
+                            ENET.p_idx[n] += nrecv/sizeof(uint32_t); // keeps track of how much data each 'read' brought in to update the array index of where to store the next set of incoming data
+                            if(ENET.p_idx[n] == 2*g_recLen){ // after each channel has read in all the data its supposed to for each pulse, p_idx is reset to 0. 'k' is a counter to keep track of how many boards have completed data transfer
                                 k++;
                                 ENET.p_idx[n] = 0;
                             }
                         } else {
                             k++;
                         }
-                        if( k == maxboard ){ // if all data from all SoCs has been collected and transfered to the cServer, let the (python) server know so it can move on with the program
+                        if( k == maxboard ){ // if all data from all SoCs has been collected and transfered to the cServer, let the python UI know so it can move on with the program
                             if(send(IPC.clifd,&n,sizeof(int),MSG_CONFIRM) == -1){
                                 perror("IPC send failed\n");
                                 exit(1);
                             }
                             k = 0;
                             setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
-                            if(dataMaskWait == 2) dataMaskWait = 0; // see the note under case(CASE_SETCHANNELMASK)
+                            if(dataMaskWait == 2) dataMaskWait = 0; // see the note under case(CASE_SET_CHANNEL_MASK)
                         }
                     }
                     
                 }
             }
           
-            // IPC message handler. note: python shouldn't *send* messages to the cServer through the socket, this only monitors whether the python ipc socket has closed, which it needs to know if it wants to send data through it
+            // IPC message handler. note: python shouldn't *send* messages to the cServer through the socket, this only monitors whether the python ipc socket has closed, which the cServer needs to know if it wants to send data to the pytho UI
             for(n=0;n<maxipc;n++){
                 if(FD_ISSET(IPC.clifd, &readfds)){
                     nrecv = recv(IPC.clifd,&fmsg,sizeof(struct FIFOmsg),MSG_WAITALL);
@@ -557,7 +649,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                 }
             }
     
-            // Handles new ethernet connections waiting to be established with the cServer
+            // Handles/accepts new ethernet connections waiting to be established with the cServer
             if( FD_ISSET(ENET.sockfd, &readfds) ){
                 acceptENETconnection(&ENET);
                 for(n=0;n<MAX_FPGAS;n++){
@@ -568,7 +660,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                 }
             }
             
-            // Handles new ipc socket connection waiting to be established with the cServer
+            // Handles/accepts new ipc socket connection waiting to be established with the cServer
             if( FD_ISSET(IPC.ipcfd, &readfds) ){
                 acceptIPCconnection(&IPC);
                 maxipc = 1;
