@@ -140,7 +140,7 @@ void setupENETserver(struct ENETsock *ENET){ // function to set up ethernet sock
 
 
 void resetGlobalVars(){ // function to reset all global variables, global variables are prepended with 'g_'
-    g_recLen = 2048; g_enetPacketSize = 2048; g_trigDelay = 0; g_socTransReadyTimeout = 500;
+    g_recLen = 2048; g_enetPacketSize = 1024; g_trigDelay = 0; g_socTransReadyTimeout = 500;
     g_idx1len = 1; g_idx2len = 1; g_idx3len = 1;
     g_id1 = 0; g_id2 = 0; g_id3 = 0;
 }
@@ -225,7 +225,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 
     resetGlobalVars();                                                      // sets all the global variables to their defualt values
     uint32_t *data;                                                         // array to store acquired data
-    uint32_t datatmp[2*8191];                                               // small array to store incoming data from single SoC
+    uint32_t datatmp[2*MAX_RECLEN];                                         // small array to store incoming data from single SoC
     data = (uint32_t *)malloc(2*MAX_FPGAS*g_recLen*sizeof(uint32_t));       // initial memory allocation for 'data'
     unsigned long data_idx;                                                 // index of where to write incoming data in the 'data' array
     int dataMaskWait=0;                                                     // flag to let the cServer know whether a mask is in place during a given acquisition event 
