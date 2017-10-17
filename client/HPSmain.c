@@ -61,17 +61,26 @@
 
 int RUN_MAIN = 1;
 
+// load user defined functions 
 #include "client_funcs.h"
 
 int main(int argc, char *argv[]) { printf("into main!\n");
 	
-    uint32_t dtmp[2*MAX_DATA_LEN];
-	int c2p[2]; int p2c[2];
+    uint32_t dtmp[2*MAX_DATA_LEN]; // variable to store data acquired from FPGA
     
+    // pipe variables to enable communications between child and parent process after fork
+	int c2p[2]; int p2c[2];
     if( pipe(c2p) == -1 ){ perror("c2p pipe"); exit(1); }
     if( pipe(p2c) == -1 ){ perror("p2c pipe"); exit(1); }
 
-    int sv[2]; socketpair(AF_UNIX,SOCK_STREAM,0,sv);
+	// socket variable to communicate between child and parent processes after fork
+    int sv[2];
+    socketpair(AF_UNIX,SOCK_STREAM,0,sv);
+    
+    /* fork a process
+		- child process handles all communications with the FPGA
+		- parent process handles communications from cServer and from child process, essentially a middle man
+	*/
 	pid_t pid;
 	pid = fork();
 	if( pid == 0 ){
@@ -81,7 +90,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 		close(c2p[1]); close(p2c[0]);
 	}
 	
-	uint32_t enetmsg[4] = {0};
+	uint32_t enetmsg[4] = {0}; // messaging variable to handle messages from cServer
     
 	// loads board-specific data from onboard file
     int boardData[3];
@@ -113,7 +122,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 		nready = select(maxfd+1, &readfds, (fd_set *) 0, (fd_set *) 0, &tv);
 		
 		if( nready > 0 ){
-			if( FD_ISSET( ENET.sockfd, &readfds ) ){ // message from server
+			if( FD_ISSET( ENET.sockfd, &readfds ) ){ // incoming message from cServer
 				nrecv = recv(ENET.sockfd,&enetmsg,4*sizeof(uint32_t),MSG_WAITALL);	
                 setsockopt(ENET.sockfd,IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int));	
 
@@ -122,24 +131,23 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 					enetmsg[0] = 8;
 				}
 				
-                if( enetmsg[0]<CASE_KILLPROGRAM ){
+                if( enetmsg[0]<CASE_KILLPROGRAM ){ // if message doesn't shutdown the SoC, forward message to child process
                     if( enetmsg[0] == CASE_RECLEN ){ recLen = enetmsg[1]; }
                     write(p2c[1],&enetmsg,4*sizeof(uint32_t));
-				} else {
+				} else { // if error, shutdown SoC
 					kill(pid,SIGKILL);
 					RUN_MAIN = 0;
 				}
 
 			}
  
-			if( FD_ISSET(sv[0],&readfds) ){ // message from child
+			if( FD_ISSET(sv[0],&readfds) ){ // incoming message from child
                 rdcnt = read(sv[0],&dtmp,2*recLen*sizeof(uint32_t));
                 write(ENET.sockfd,dtmp,rdcnt);
                 setsockopt(ENET.sockfd,IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int));	
 			}
 		}
 	} 
-	//munmap(data, 2*MAX_DATA_LEN*sizeof(uint32_t));
 	close(c2p[0]); close(p2c[1]); close(sv[0]);
 	close(ENET.sockfd);
 	sleep(1);

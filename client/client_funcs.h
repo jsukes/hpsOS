@@ -1,6 +1,6 @@
 
 
-struct ENETsock{
+struct ENETsock{ // structure to store ethernet variables
 	int sockfd;
 	int portNum;
 	const char *server_addr;
@@ -8,7 +8,7 @@ struct ENETsock{
 };
 
 
-struct FPGAvars{
+struct FPGAvars{ // structure to hold variables that are mapped to the FPGA hardware registers
 	void *virtual_base;
 	int fd;
 	uint32_t volatile* read_addr;
@@ -23,7 +23,7 @@ struct FPGAvars{
 };
 
 
-void FPGAclose(struct FPGAvars *FPGA){
+void FPGAclose(struct FPGAvars *FPGA){ // closes the memory mapped file with the FPGA hardware registers
 	
 	if( munmap( FPGA->virtual_base, HW_REGS_SPAN ) != 0 ) {
 		printf( "ERROR: munmap() failed...\n" );
@@ -33,7 +33,7 @@ void FPGAclose(struct FPGAvars *FPGA){
 }
 
 
-int FPGA_init(struct FPGAvars *FPGA){
+int FPGA_init(struct FPGAvars *FPGA){ // maps the FPGA hardware registers to the variables in the FPGAvars struct
 	
 	if( ( FPGA->fd = open( "/dev/mem", ( O_RDWR | O_SYNC ) ) ) == -1 ) {
 		printf( "ERROR: could not open \"/dev/mem\"...\n" );
@@ -80,7 +80,7 @@ int FPGA_init(struct FPGAvars *FPGA){
 }
 
 
-void getBoardData(int argc, char *argv[], int *boardData){
+void getBoardData(int argc, char *argv[], int *boardData){ // load the boards specific data from files stored on SoC
 		
 	char const* const fileName = "boardData";
     FILE* file = fopen(fileName, "r");
@@ -95,7 +95,7 @@ void getBoardData(int argc, char *argv[], int *boardData){
 }
 
 
-void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){
+void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ // connect to the cServer through ethernet
 	struct timeval t0,t1;
 	int diff;
     int one = 1;
@@ -126,7 +126,7 @@ void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){
 }
 
 
-void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
+void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that talks to the FPGA and transmits data to the SoCs
     
     struct FPGAvars FPGA;	
     
@@ -142,7 +142,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 
     // local version of runtime variables 
 	uint32_t recLen = 2048;
-    uint32_t packetsize = 512;
+    uint32_t packetsize = 1024;
 
     // mask variables for data acq
     uint32_t mask1,mask2,maskState;
@@ -155,8 +155,8 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 	maxfd = inPipe;
 	sec = 0; usec = 1000;
 
-	int dataRunner = 1;
-	int dataGo = 0;
+	int dataRunner = 1; // flag to run this process, 0 ends the program running on the SoC
+	int dataGo = 0; // flag to tell SoC whether it's in a data acquisition mode or not
 
 	while(dataRunner == 1){
 		tv.tv_sec = sec;
@@ -170,7 +170,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 			if(FD_ISSET(inPipe, &readfds)){
 
 				n = read(inPipe,&pipemsg,4*sizeof(uint32_t));
-				if(n == 0){ // connection close or parent terminated
+				if(n == 0){ // connection closed or parent terminated
                     dataRunner = 0;
                     break;
                 }
@@ -195,13 +195,13 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 						} else {
 							DREF(FPGA.recLen) = 2048;
 							recLen = DREF(FPGA.recLen);
-                            packetsize = 512;
+                            packetsize = 1024;
                             printf("invalid recLen, defaulting to 2048, packetsize 512\n");
 						}
 						break;
 					}
 
-					case(CASE_TRANSREADY_TIMEOUT):{ // change select loop timeout/how often transReady is checked (min 100us)
+					case(CASE_TRANSREADY_TIMEOUT):{ // change select loop timeout/how often transReady is checked (min 10us)
 						if(pipemsg[1] > 9 && pipemsg[1] <10000000){
 							sec = pipemsg[1]/1000000;
 							usec = pipemsg[1]%1000000; 
@@ -237,13 +237,13 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 						break;
 					}
     
-                    case(CASE_SETPACKETSIZE):{
+                    case(CASE_SETPACKETSIZE):{ // how much data to read from the FPGA at a time before interrupting the read from the FPGA to send the sub-block of data to the cServer over ethernet before resuming reading in the next block of data
                         printf("packetsize set to: %zu\n",pipemsg[1]);
                         packetsize = pipemsg[1];
                         break;
                     }
 
-                    case(CASE_MASKRECVCHANNELS):{
+                    case(CASE_MASKRECVCHANNELS):{ // prevents program from overwriting memory associated with elements under the mask after each acquisition
                         mask1 = pipemsg[1];
                         mask2 = pipemsg[2];
                         maskState = pipemsg[3] & 0x000000ff;
@@ -262,19 +262,19 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){//uint32_t *data){
 			}
 	
 		} else if ( nready == 0 ){ // if select loop times out, check for data
-            if( dataGo == 1 ){
+            if( dataGo == 1 ){ // if in data acquisition mode, check whether FPGA has data ready to transmite
                 if ( DREF(FPGA.transReady) == 1 ){
                     if( maskState == 0 ){
-                        for(n=0;n<recLen;n++){
+                        for(n=0;n<recLen;n++){ // read data from FPGA into SoC memory
                             DREF(FPGA.read_addr) = n;
                             datatmp[2*n] = DREF(FPGA.gpio0_addr);
                             datatmp[2*n+1] = DREF(FPGA.gpio1_addr);
                             if((n%packetsize) == (packetsize-1)){
-                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
+                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t)); // send data to parent process to send over enet to cServer
                             }
                         }
 
-                    } else if ( maskState == 1 ){
+                    } else if ( maskState == 1 ){ // maskState 1 and 2 do the same thing as maskState 0, but set masks on associated channels and/or disable acquisition from the FPGA GPIOs
 						if( ( mask1 | mask2 ) == 0 ){
 							;
 						} else if ( mask1 == 0 ){
