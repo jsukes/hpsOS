@@ -278,8 +278,9 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         - msg[3] -> bits[31:24] - tells cServer to send message to all boards, or one board at a time
                         - msg[3] -> bits[23:16] - data to be sent
                         - msg[3] -> bits[15:8]  - 8-bit number telling which board to send message to
-                        - msg[3] -> bits[7:0]   - data to be sent Note: the bit fields in msg[3] accessed through bitwise operations in this code, but
-                          can be cast into a 4-element uint8_t array if desired.
+                        - msg[3] -> bits[7:0]   - data to be sent
+                            Note: the bit fields in msg[3] are accessed through bitwise operations in this code, but
+                            can be cast into a 4-element, uint8_t array if desired.
                 */
 
                 fmsg.msg[0]=0; fmsg.msg[1]=0; fmsg.msg[2]=0; fmsg.msg[3]=0; /* resets all the 'msg' variables before reading new ones */
@@ -301,7 +302,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             - All messages which change data acquisition variables write the recv'd values into the corresponding global variable in
                               the cServer
                             - If recv'd values in msg[1]-msg[3] are illegal (eg trigDelay < 0), they are instead set to their default values
-                                - If recLen is less than the enet packetsize, enet packetsize get overwritten as recLen
+                                - If recLen is less than the enet packetsize, enet packetsize gets overwritten as recLen
                             - After all messages that change the size of data to be acquired you need to call CASE_ALLOCATE_CSERVER_DATA_ARRAY_MEM to
                               resize the storage variable in the cServer. No on-the-fly memory reallocation allowed
                             - All cases need to 'break' out of the 'switch' statement when they're done, else the switch statement will execute the
