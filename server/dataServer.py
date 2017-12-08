@@ -276,7 +276,7 @@ class dataServer():
 		if (recvBoards > 0):
 			msg = struct.pack(self.cmsg,12,0,0,0,"")
 			self.ff.write(msg)
-			return self.ipcsock.recv(2*self.recLen*recvBoards*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
+			return self.ipcsock.recv(2*self.recLen*self.l1*self.l2*self.l3*recvBoards*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
 		else:
 			print 'Invalid number of boards to getData from. Must be greater than zero. Since this function is supposed to return something, you probably have to restart the python server'
 	

@@ -1,5 +1,5 @@
 #
-TARGET = cdevTestHPS
+TARGET = devTestHPS
 
 #
 CROSS_COMPILE = arm-linux-gnueabihf-
