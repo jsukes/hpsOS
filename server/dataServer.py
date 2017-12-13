@@ -227,6 +227,7 @@ class dataServer():
 		msg = struct.pack(self.cmsg,5,1,0,0,"")
 		self.ff.write(msg)
 		time.sleep(0.05)
+		self.getBoardCount()
 		
 	def toggleDataAcq(self,da):
 		# puts the cServer/SoCs into or out of a data acquisition state. takes integer 'da' as input
@@ -320,6 +321,28 @@ class dataServer():
 		# tells python to wait for confirmation from the cServer that all data has been received from the SoCs. used to synchronize transmit and receive systems
 		return self.ipcsock.recv(4,socket.MSG_WAITALL)
 	
+	def getBoardCount(self):
+		# gets the number of boards connected to the cServer
+		msg = struct.pack(self.cmsg,14,0,0,0,"")
+		self.ff.write(msg)
+		self.boardCount = struct.Struct('=I').unpack(self.ipcsock.recv(4,socket.MSG_WAITALL))[0]
+		return self.boardCount
+	
+	def getBoardNums(self):
+		# gets the identifying numbers of the boards connected to the cServer 
+		
+		if self.boardCount == 0:
+			self.getBoardCount()
+		if self.boardCount > 0:
+			msg = struct.pack(self.cmsg,15,0,0,0,"")
+			self.ff.write(msg)
+			self.boardNums = np.array(struct.Struct('{}{}{}'.format('=',self.boardCount,'I')).unpack(self.ipcsock.recv(self.boardCount*4,socket.MSG_WAITALL)))
+		else:
+			self.boardNums = []
+			print 'no boards are connected to the cServer'
+			
+		return self.boardNums
+		
 	def shutdown(self):
 		# shuts down the SoCs and C server
 		self.ipcsock.close()
@@ -356,6 +379,8 @@ class dataServer():
 		self.recLen = 2048
 		self.id1,self.id2,self.id3 = 0,0,0
 		self.l1, self.l2, self.l3 = 1,1,1
+		self.boardCount = 0
+		self.boardNums = []
 		
 
 	
