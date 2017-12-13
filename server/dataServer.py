@@ -53,7 +53,7 @@
 		b.stop()
 		d = dataServer()
 		
-		### declare how many receiving boards are acquiring data
+		### declare how many receiving boards should be acquiring data
 		RECVBOARDS = 8
 		
 		### declare runtime variables required by the transmit system/python loop
@@ -85,6 +85,9 @@
 		### set the size of the data array to be acquired and allocate memory accordingly
 		d.setDataArraySize(nChargeTimes,nPulsesPerLoc,nLocations)
 		d.allocateDataArrayMemory()
+		if RECVBOARDS != d.boardCount:
+			print 'the number of boards connected (',d.boardCount,') doesn't match the number specified (',RECVBOARDS,')'
+			print 'board numbers of connected socs:', d.getBoardNums()
 		
 		### put the cServer and SoCs in a state to be ready to acquire data
 		d.toggleDataAcq(1)
@@ -123,7 +126,7 @@
 		#----------------------------------------------------#
 		
 		### transfer the data from the cServer to python ###
-		binary_data = d.getData(RECVBOARDS)
+		binary_data = d.getData()
 		
 		#            #
 		#---> OR <---#	
@@ -147,6 +150,7 @@
 import socket
 import struct
 import time
+import select
 import numpy as np
 from dataServerParamConfig import *
 
@@ -272,14 +276,15 @@ class dataServer():
 		self.ff.write(msg)
 		time.sleep(0.05)
 		
-	def getData(self,recvBoards):
-		# this function tells the cServer to transfer the array it is storing the data in directly to the python server for the user to do with what they want. takes integer value 'recvBoards' as the input, 'recvBoards' is an integer value corresponding the number of boards currently acquiring data. this function returns a binary array containing the data to the user. if 'recvBoards' is greater than the number of connected SoCs, the program will hang. Weird things might happen if you set it to less than the number of connected boards, not sure though to be honest.
-		if (recvBoards > 0):
+	def getData(self):
+		# this function tells the cServer to transfer the array it is storing the data in directly to the python server for the user to do with what they want. this function returns a binary array containing the data to the user. 
+		if (self.boardCount > 0):
 			msg = struct.pack(self.cmsg,12,0,0,0,"")
 			self.ff.write(msg)
-			return self.ipcsock.recv(2*self.recLen*self.l1*self.l2*self.l3*recvBoards*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
+			return self.ipcsock.recv(2*self.recLen*self.l1*self.l2*self.l3*self.boardCount*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
 		else:
-			print 'Invalid number of boards to getData from. Must be greater than zero. Since this function is supposed to return something, you probably have to restart the python server'
+			print 'Invalid number of boards detected,returning single value \'0\' '
+			return 0
 	
 	def setChannelMask(self,cmask,maskState):
 		'''tells the SoCs to acquire data only from channels not under the mask, and whether or not to transmit that data to the cServer after a given pulse. takes integer array 'cmask' and integer value 'maskState' as inputs. 
@@ -317,9 +322,18 @@ class dataServer():
 		
 		self.ipcWait()
 		
-	def ipcWait(self):
+	def ipcWait(self,to=None):
 		# tells python to wait for confirmation from the cServer that all data has been received from the SoCs. used to synchronize transmit and receive systems
-		return self.ipcsock.recv(4,socket.MSG_WAITALL)
+		# 'to' is an optional timeout argument that tells python that if no data arrives within the specified timeout, to return the value '0' and continue the regular running of the program
+		if to != None:
+			nready = select.select([self.ipcsock], [], [], to)
+			if nready[0]:
+				return self.ipcsock.recv(4,socket.MSG_WAITALL)
+			else:
+				print 'ipcWait timed out'
+				return 0
+		else:
+			return self.ipcsock.recv(4,socket.MSG_WAITALL)
 	
 	def getBoardCount(self):
 		# gets the number of boards connected to the cServer
