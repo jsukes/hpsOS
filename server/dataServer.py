@@ -347,12 +347,13 @@ class dataServer():
 		
 		if self.boardCount == 0:
 			self.getBoardCount()
+			
 		if self.boardCount > 0:
 			msg = struct.pack(self.cmsg,15,0,0,0,"")
 			self.ff.write(msg)
 			self.boardNums = np.array(struct.Struct('{}{}{}'.format('=',self.boardCount,'I')).unpack(self.ipcsock.recv(self.boardCount*4,socket.MSG_WAITALL)))
 		else:
-			self.boardNums = []
+			self.boardNums = 0
 			print 'no boards are connected to the cServer'
 			
 		return self.boardNums
