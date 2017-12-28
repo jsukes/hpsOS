@@ -53,7 +53,7 @@
 
 
 #define DREF(X) ( *(uint32_t *) X )
-#define DREFP(X) ( (uint64_t *) X )
+#define DREFP(X) ( (uint32_t *) X )
 #define MAX_DATA_LEN 8192
 #define INIT_PORT 3400
 
@@ -63,8 +63,6 @@
 #define CASE_TRANSREADY_TIMEOUT 2
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
-#define CASE_SETPACKETSIZE 11
-#define CASE_MASKRECVCHANNELS 13
 #define CASE_QUERY_DATA 16
 #define CASE_KILLPROGRAM 17
 

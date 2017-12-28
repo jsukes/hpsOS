@@ -187,21 +187,6 @@ class dataServer():
 			print 'Record Length less than previous packet size, packet size set to record length (', self.packetSize,')'
 			time.sleep(0.05)
 			
-	def setEnetPacketSize(self,ps):
-		# sets the size of the packets to be sent over ethernet from the SoCs. Takes integer 'ps' as input. Should be a power of two, must be an even divisor of the record length. Recommended to keep it 1024 or less
-		if (ps > 0) and (ps <= self.recLen):
-			self.packetSize = int(ps)
-		else:
-			if self.recLen >= 1024:
-				self.packetSize = 1024
-			else:
-				self.packetSize = self.recLen
-			print 'Invalid packet size, setting packet size equal to record length (',self.packetSize,'). [ Valid range = 1 - record length ]'
-			
-		msg = struct.pack(self.cmsg,11,self.packetSize,0,0,"")
-		self.ff.write(msg)
-		time.sleep(0.05)
-			
 	def setSocTransReadyTimeout(self,to):
 		# sets how often the SoCs check whether they have data ready to transmit. takes integer 'to' as input, units = us. lower values make the SoC check for data more frequently but burns cpu time by checking more frequently/busy waiting. should be set as high as possible without slowing down the program or otherwise effecting performance.
 		if (to>=TRANS_READY_TIMEOUT_MIN):
@@ -286,42 +271,6 @@ class dataServer():
 			print 'Invalid number of boards detected,returning single value \'0\' '
 			return 0
 	
-	def setChannelMask(self,cmask,maskState):
-		'''tells the SoCs to acquire data only from channels not under the mask, and whether or not to transmit that data to the cServer after a given pulse. takes integer array 'cmask' and integer value 'maskState' as inputs. 
-		
-		- cmask is an array of 1's and 0's with a length equal to the number of receiving elements currently connected to the array. a value of 1 in cmask tells the cServer to acquire data from a given element, a value of 0 tells it not to. each element of cmask masks or unmask the receiving element with the corresponding index in the cmask array. 
-		
-		- maskState is an integer which tells the cServer/SoCs what to with the masks
-			maskState = 0, no mask set, transmit acquired data to the cServer after every pulse
-			maskState = 1, mask set, DO NOT transmit data after acquisition event
-			maskState = 2, mask set, but this is the last acquisition event under the mask, DO transmit data after trigger (use for last pulse in sequence) and reset maskState to 0 on the SoCs/cServer
-			
-		example use case:
-		1) pulse one - in maskState 1, element zero is unmasked and all other elements are masked. upon triggering, the SoC will only acquire data from element zero and not transmit the acquired data to the cServer. 
-		2) pulse two - still in maskState 1, element one is unmasked and all other elements are masked. upon triggering, the SoC will only acquire data from element one and not transmit the acquired data. the SoC now has data from pulse one, element zero and pulse two, element one stored in it.
-		3) pulse three - now in maskState 2, elements two through N are unmasked and elements zero and one are masked. upon triggering, the SoC will acquire data from elements two through N AND transmit the acquired data to the cServer. the acquired data will contain the signal from element zero from the first pulse, the signal from element one from the second pulse, and the signals from elements two through N from the third pulse
-		4) after acquisition, unset the mask by setting maskState equal to zero
-		
-		This lets you acquire data from multiple pulses without transfering all the data over ethernet to the cServer after each pulse, but it doesn't let you acquire multiple pulses from all elements simultaneously without masking others. That feature may or may not be built in in the future, but I'm not going to bother with it now because it would require a bigger rewrite of the code base than this solution did because of potential memory allocation/reallocation issues. It might also not be necessary if the slow bridge issue ever gets solved, but even if it doesn't the system is fast enough now to mostly get around it. It can offer potentially large speed ups though by throwing away all the data from one or the other GPIOs on the FPGA. Roughly 1/3 of the slow bridge time each is taken up by transferring data to the SoC from GPIO_0 and GPIO_1, so by setting the mask such that all channels on GPIO_0 or GPIO_1 are turned off, significant speed ups can be had, but only if one or the other is turned off on ALL receiving boards. I haven't implemented a function to transfer subsets of data over ethernet yet though, so even if you only want to acquire data from half the elements anyway, you still have to transmit a full sized array of data over ethernet to the cServer. Eventually I might add the ability to transfer subsets of data, but it'd require a bit of rewriting of the code base and hasn't been a significant enough bottle neck yet to do it.'''
-		
-		cmask = cmask.astype(int)
-		for boardN in range(0,RECVBOARDS):
-			m14,m58,mbn = 0,0,0
-			for m in range(0,4):
-				if cmask[boardN*8+m]>0:
-					m14 |= (0xff << m*8)
-				if cmask[boardN*8+m+4]>0:
-					m58 |= (0xff << m*8)
-			if maskState != 0:
-				mbn |= (0xff << 24)
-			mbn |= int(maskState)
-			mbn |= (boardN << 8)
-					
-			msg = struct.pack(self.cmsg,13,m14,m58,mbn,"")
-			self.ff.write(msg)
-		
-		self.ipcWait()
-		
 	def ipcWait(self,to=None):
 		# tells python to wait for confirmation from the cServer that all data has been received from the SoCs. used to synchronize transmit and receive systems
 		# 'to' is an optional timeout argument that tells python that if no data arrives within the specified timeout, to return the value '0' and continue the regular running of the program

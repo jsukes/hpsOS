@@ -23,9 +23,8 @@ struct FPGAvars{ // structure to hold variables that are mapped to the FPGA hard
 	uint32_t volatile* stateVal;
 	
 	uint32_t volatile* onchip0;
-	uint64_t volatile* onchip1;
+	uint32_t volatile* onchip1;
 };
-
 
 
 void FPGAclose(struct FPGAvars *FPGA){ // closes the memory mapped file with the FPGA hardware registers
@@ -87,7 +86,7 @@ int FPGA_init(struct FPGAvars *FPGA){ // maps the FPGA hardware registers to the
 	
 	FPGA->onchip0 = FPGA->axi_virtual_base + ( ( uint32_t  )( ONCHIP_MEMORY2_0_BASE ) & ( uint32_t)( HW_FPGA_AXI_MASK ) );
 
-	FPGA->onchip1 = FPGA->axi_virtual_base + ( ( uint64_t  )( ONCHIP_MEMORY2_1_BASE ) & ( uint64_t)( HW_FPGA_AXI_MASK ) );
+	FPGA->onchip1 = FPGA->axi_virtual_base + ( ( uint32_t  )( ONCHIP_MEMORY2_1_BASE ) & ( uint32_t)( HW_FPGA_AXI_MASK ) );
 	
 	DREF(FPGA->transReady) = 0;
 	DREF(FPGA->trigDelay) = 0;
@@ -153,10 +152,9 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
     struct FPGAvars FPGA;	
     
 	uint32_t pipemsg[4] = {0};
-	int nready,nSends; 
+	int nready; 
     uint32_t n,m;
-    uint64_t *d64;
-    uint32_t datatmp[2*MAX_DATA_LEN];
+    uint32_t *d32;
    
     if( FPGA_init(&FPGA) == 1 ){
 		pipemsg[0] = 0; pipemsg[1] = 1;
@@ -166,12 +164,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 	
     // local version of runtime variables 
 	uint32_t recLen = 2048;
-    uint32_t packetsize = 1024;
 
-    // mask variables for data acq
-    uint32_t mask1,mask2,maskState;
-    mask1 = 0xffffffff; mask2 = 0xffffffff; maskState = 0;
-    
     // variables for select loop
 	int maxfd, sec, usec;
 	struct timeval tv;
@@ -182,10 +175,10 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 	struct timeval t0,t1,t2,t3;
 	int tmp,diff;
 
-	int dataRunner = 1; // flag to run this process, 0 ends the program running on the SoC
+	int runHPS = 1; // flag to run this process, 0 ends the program running on the SoC
 	int dataGo = 0; // flag to tell SoC whether it's in a data acquisition mode or not
 
-	while(dataRunner == 1){
+	while(runHPS == 1){
 		tv.tv_sec = sec;
 		tv.tv_usec = usec;
 		FD_ZERO(&readfds);
@@ -198,7 +191,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 
 				n = read(inPipe,&pipemsg,4*sizeof(uint32_t));
 				if(n == 0){ // connection closed or parent terminated
-                    dataRunner = 0;
+                    runHPS = 0;
                     break;
                 }
 				
@@ -215,17 +208,11 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 							DREF(FPGA.recLen) = pipemsg[1];
 							recLen = DREF(FPGA.recLen);
 							printf("recLen set to %zu\n",DREF(FPGA.recLen));
-                            if(pipemsg[2]>0 && pipemsg[2] <= recLen && pipemsg[2]%recLen == 0){
-                                packetsize = pipemsg[2];
-                                printf("packetsize set to: %zu\n",pipemsg[2]);
-                            }
 						} else {
 							DREF(FPGA.recLen) = 2048;
 							recLen = DREF(FPGA.recLen);
-                            packetsize = 1024;
-                            printf("invalid recLen, defaulting to 2048, packetsize 512\n");
+                            printf("invalid recLen, defaulting to 2048\n");
 						}
-						nSends=recLen/packetsize;
 						break;
 					}
 
@@ -247,7 +234,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
                         printf("closing program\n");
 						FPGAclose(&FPGA);
 						dataGo = 0;
-						dataRunner = 0;
+						runHPS = 0;
 						break;
 					}
 
@@ -265,35 +252,14 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 						break;
 					}
     
-                    case(CASE_SETPACKETSIZE):{ // how much data to read from the FPGA at a time before interrupting the read from the FPGA to send the sub-block of data to the cServer over ethernet before resuming reading in the next block of data
-                        printf("packetsize set to: %zu\n",pipemsg[1]);
-                        packetsize = pipemsg[1];
-                        nSends = recLen/packetsize;
-                        break;
-                    }
-
-                    case(CASE_MASKRECVCHANNELS):{ // prevents program from overwriting memory associated with elements under the mask after each acquisition
-                        mask1 = pipemsg[1];
-                        mask2 = pipemsg[2];
-                        maskState = pipemsg[3] & 0x000000ff;
-                        write(sv,&maskState,sizeof(uint32_t));
-                        break;
-                    }
- 
 					case(CASE_QUERY_DATA):{
-						//~ printf("hello %d %d\n",DREF(FPGA.read_addr),tmp);
 						while( DREF(FPGA.transReady) == 0 && ++tmp<1000){
 							usleep(10);
 						}
 						
 						if(tmp<1000){	
-							//~ gettimeofday(&t2,NULL);
-							d64 = DREFP(FPGA.onchip1);
-							
-							write(sv,d64,recLen*sizeof(uint64_t));
-							//~ gettimeofday(&t3,NULL);
-							//~ diff = t3.tv_usec-t2.tv_usec;
-							//~ printf("time time time = %d, %d\n",diff,DREF(FPGA.trigCnt));
+							d32 = DREFP(FPGA.onchip1);
+							write(sv,d32,2*recLen*sizeof(uint32_t));
 						}
                         DREF(FPGA.stateReset) = 1; 
                         usleep(10);
@@ -307,88 +273,12 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 					default:{
                         printf("default case, shutting down\n");
 						FPGAclose(&FPGA);
-						dataRunner = 0;
+						runHPS = 0;
 						dataGo = 0;
 						break;
 					}
 				}
 			}
-	
-		} else if ( nready == 0 ){ // if select loop times out, check for data
-            if( dataGo == 1 ){ // if in data acquisition mode, check whether FPGA has data ready to transmite
-                //~ printf("transReady=%d\n",DREF(FPGA.transReady));
-                if ( DREF(FPGA.transReady) == 7 ){
-                    if( maskState == 0 ){
-                        for(n=0;n<recLen;n++){ // read data from FPGA into SoC memory
-                            DREF(FPGA.read_addr) = n;
-                            datatmp[2*n] = DREF(FPGA.gpio0_addr);
-                            datatmp[2*n+1] = DREF(FPGA.gpio1_addr);
-                            if((n%packetsize) == (packetsize-1)){
-                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t)); // send data to parent process to send over enet to cServer
-                            }
-                        }
-
-                    } else if ( maskState == 1 ){ // maskState 1 and 2 do the same thing as maskState 0, but set masks on associated channels and/or disable acquisition from the FPGA GPIOs
-						if( ( mask1 | mask2 ) == 0 ){
-							;
-						} else if ( mask1 == 0 ){
-							for(n=0;n<recLen;n++){
-								DREF(FPGA.read_addr) = n;
-								datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
-							}	
-						} else if ( mask2 == 0 ){
-							for(n=0;n<recLen;n++){
-								DREF(FPGA.read_addr) = n;
-								datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
-							}	
-						} else {
-							for(n=0;n<recLen;n++){
-								DREF(FPGA.read_addr) = n;
-								datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
-								datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
-							}
-						}
-                        write(sv,&datatmp[0],sizeof(uint32_t));
-
-                    } else {
-						if( ( mask1 | mask2 ) == 0 ){
-							for(n=0;n<recLen;n++){
-	                            if((n%packetsize) == (packetsize-1)){
-	                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
-	                            }
-							}
-						} else if ( mask1 == 0 ){
-							for(n=0;n<recLen;n++){
-								DREF(FPGA.read_addr) = n;
-								datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
-								if((n%packetsize) == (packetsize-1)){
-	                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
-	                            }
-							}	
-						} else if ( mask2 == 0 ){
-							for(n=0;n<recLen;n++){
-								DREF(FPGA.read_addr) = n;
-								datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
-								if((n%packetsize) == (packetsize-1)){
-	                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
-	                            }
-							}	
-						} else {
-							for(n=0;n<recLen;n++){
-								DREF(FPGA.read_addr) = n;
-								datatmp[2*n] = ( DREF(FPGA.gpio0_addr) & mask1 ) | ( datatmp[2*n] & ~mask1 );
-								datatmp[2*n+1] = ( DREF(FPGA.gpio1_addr) & mask2 ) | ( datatmp[2*n+1] & ~mask2 );
-								if((n%packetsize) == (packetsize-1)){
-	                                write(sv,&datatmp[2*((n+1)-packetsize)],2*packetsize*sizeof(uint32_t));
-	                            }
-							}
-						}
-                    }
-                    DREF(FPGA.stateReset) = 1; 
-                    DREF(FPGA.read_addr) = 0;
-                    DREF(FPGA.stateReset) = 0;
-                }
-            }
         }
     }
 	printf("dataAcq loop broken\n");
