@@ -10,6 +10,7 @@ struct ENETsock{ // structure to store ethernet variables
 
 struct FPGAvars{ // structure to hold variables that are mapped to the FPGA hardware registers
 	void *virtual_base;
+	void *axi_virtual_base;
 	int fd;
 	uint32_t volatile* read_addr;
 	uint32_t volatile* gpio0_addr;
@@ -19,8 +20,12 @@ struct FPGAvars{ // structure to hold variables that are mapped to the FPGA hard
 	uint32_t volatile* recLen;
 	uint32_t volatile* stateReset;
 	uint32_t volatile* trigCnt;
-	uint32_t volatile* stateVal;	
+	uint32_t volatile* stateVal;
+	
+	uint32_t volatile* onchip0;
+	uint64_t volatile* onchip1;
 };
+
 
 
 void FPGAclose(struct FPGAvars *FPGA){ // closes the memory mapped file with the FPGA hardware registers
@@ -29,6 +34,11 @@ void FPGAclose(struct FPGAvars *FPGA){ // closes the memory mapped file with the
 		printf( "ERROR: munmap() failed...\n" );
 		close( FPGA->fd );
 	}
+	if( munmap( FPGA->axi_virtual_base, HW_FPGA_AXI_SPAN ) != 0 ) {
+		printf( "ERROR: munmap() failed...\n" );
+		close( FPGA->fd );
+	}
+
 	close( FPGA->fd );
 }
 
@@ -42,6 +52,21 @@ int FPGA_init(struct FPGAvars *FPGA){ // maps the FPGA hardware registers to the
 	
 	FPGA->virtual_base = mmap( NULL, HW_REGS_SPAN, ( PROT_READ | PROT_WRITE ), MAP_SHARED, FPGA->fd, HW_REGS_BASE );
 	
+	if( FPGA->virtual_base == MAP_FAILED ) {
+		printf( "ERROR: mmap() failed...\n" );
+		close( FPGA->fd );
+		return( 0 );
+	}
+	
+	FPGA->axi_virtual_base = mmap( NULL, HW_FPGA_AXI_SPAN, ( PROT_READ | PROT_WRITE ), MAP_SHARED, FPGA->fd,ALT_AXI_FPGASLVS_OFST );
+
+	if( FPGA->axi_virtual_base == MAP_FAILED ) {
+		printf( "ERROR: axi mmap() failed...\n" );
+		close( FPGA->fd );
+		return( 0 );
+	}
+	
+
 	FPGA->read_addr = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_H2F_READ_ADDR_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
 	
 	FPGA->gpio0_addr = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_F2H_GPIO0_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
@@ -60,11 +85,9 @@ int FPGA_init(struct FPGAvars *FPGA){ // maps the FPGA hardware registers to the
 	
 	FPGA->stateVal = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_F2H_FPGA_STATE_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
 	
-	if( FPGA->virtual_base == MAP_FAILED ) {
-		printf( "ERROR: mmap() failed...\n" );
-		close( FPGA->fd );
-		return( 0 );
-	}
+	FPGA->onchip0 = FPGA->axi_virtual_base + ( ( uint32_t  )( ONCHIP_MEMORY2_0_BASE ) & ( uint32_t)( HW_FPGA_AXI_MASK ) );
+
+	FPGA->onchip1 = FPGA->axi_virtual_base + ( ( uint64_t  )( ONCHIP_MEMORY2_1_BASE ) & ( uint64_t)( HW_FPGA_AXI_MASK ) );
 	
 	DREF(FPGA->transReady) = 0;
 	DREF(FPGA->trigDelay) = 0;
@@ -75,7 +98,6 @@ int FPGA_init(struct FPGAvars *FPGA){ // maps the FPGA hardware registers to the
 	usleep(10);
 	DREF(FPGA->stateReset)=0;
 	DREF(FPGA->read_addr) = 0;
-	
 	return(1);
 }
 
@@ -127,19 +149,21 @@ void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ /
 
 
 void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that talks to the FPGA and transmits data to the SoCs
-    
+   
     struct FPGAvars FPGA;	
     
 	uint32_t pipemsg[4] = {0};
-	int nready; 
-    uint32_t n;
+	int nready,nSends; 
+    uint32_t n,m;
+    uint64_t *d64;
     uint32_t datatmp[2*MAX_DATA_LEN];
+   
     if( FPGA_init(&FPGA) == 1 ){
 		pipemsg[0] = 0; pipemsg[1] = 1;
 	} else {
 		pipemsg[0] = 0; pipemsg[1] = 0;
 	}
-
+	
     // local version of runtime variables 
 	uint32_t recLen = 2048;
     uint32_t packetsize = 1024;
@@ -154,6 +178,9 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 	fd_set readfds;
 	maxfd = inPipe;
 	sec = 0; usec = 1000;
+	
+	struct timeval t0,t1,t2,t3;
+	int tmp,diff;
 
 	int dataRunner = 1; // flag to run this process, 0 ends the program running on the SoC
 	int dataGo = 0; // flag to tell SoC whether it's in a data acquisition mode or not
@@ -198,6 +225,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
                             packetsize = 1024;
                             printf("invalid recLen, defaulting to 2048, packetsize 512\n");
 						}
+						nSends=recLen/packetsize;
 						break;
 					}
 
@@ -240,6 +268,7 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
                     case(CASE_SETPACKETSIZE):{ // how much data to read from the FPGA at a time before interrupting the read from the FPGA to send the sub-block of data to the cServer over ethernet before resuming reading in the next block of data
                         printf("packetsize set to: %zu\n",pipemsg[1]);
                         packetsize = pipemsg[1];
+                        nSends = recLen/packetsize;
                         break;
                     }
 
@@ -251,6 +280,30 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
                         break;
                     }
  
+					case(CASE_QUERY_DATA):{
+						//~ printf("hello %d %d\n",DREF(FPGA.read_addr),tmp);
+						while( DREF(FPGA.transReady) == 0 && ++tmp<1000){
+							usleep(10);
+						}
+						
+						if(tmp<1000){	
+							//~ gettimeofday(&t2,NULL);
+							d64 = DREFP(FPGA.onchip1);
+							
+							write(sv,d64,recLen*sizeof(uint64_t));
+							//~ gettimeofday(&t3,NULL);
+							//~ diff = t3.tv_usec-t2.tv_usec;
+							//~ printf("time time time = %d, %d\n",diff,DREF(FPGA.trigCnt));
+						}
+                        DREF(FPGA.stateReset) = 1; 
+                        usleep(10);
+						DREF(FPGA.read_addr) = DREF(FPGA.recLen)+10;
+						DREF(FPGA.read_addr) = 0;
+						DREF(FPGA.stateReset) = 0;
+						tmp = 0;
+                        break;	
+					}
+					
 					default:{
                         printf("default case, shutting down\n");
 						FPGAclose(&FPGA);
@@ -263,7 +316,8 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 	
 		} else if ( nready == 0 ){ // if select loop times out, check for data
             if( dataGo == 1 ){ // if in data acquisition mode, check whether FPGA has data ready to transmite
-                if ( DREF(FPGA.transReady) == 1 ){
+                //~ printf("transReady=%d\n",DREF(FPGA.transReady));
+                if ( DREF(FPGA.transReady) == 7 ){
                     if( maskState == 0 ){
                         for(n=0;n<recLen;n++){ // read data from FPGA into SoC memory
                             DREF(FPGA.read_addr) = n;

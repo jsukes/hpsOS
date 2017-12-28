@@ -357,7 +357,12 @@ class dataServer():
 			print 'no boards are connected to the cServer'
 			
 		return self.boardNums
-		
+	
+	def queryData(self):
+		# makes the socs check for data 
+		msg = struct.pack(self.cmsg,16,0,0,0,"")
+		self.ff.write(msg)
+			
 	def shutdown(self):
 		# shuts down the SoCs and C server
 		self.ipcsock.close()

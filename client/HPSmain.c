@@ -17,35 +17,43 @@
 */
  
 
-#include <sys/types.h>
-#include <sys/socket.h>
+//~ #include <sys/types.h> // unused
+//~ #include <sys/socket.h> // unsued
 #include <sys/mman.h>
-#include <netinet/in.h>
+//~ #include <netinet/in.h> // unused
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-#include <unistd.h>
+//~ #include <stdint.h> // unused
+//~ #include <string.h> // unused
+#include <unistd.h> 
 #include <fcntl.h>
 #include <signal.h>
-#include <errno.h>
-#include <sys/time.h>
-#include <time.h>
-#include <math.h> 
-
+//~ #include <errno.h> // unused
+#include <sys/time.h> 
+//~ #include <time.h> // unused
+//~ #include <math.h> // unused
+#define soc_cv_av
 #include "hwlib.h"
-#include "socal/socal.h"
-#include "socal/hps.h"
-#include "socal/alt_gpio.h"       
-#include "hps_0h.h"     
+#include "soc_cv_av/socal/socal.h"
+#include "soc_cv_av/socal/hps.h"
+#include "soc_cv_av/socal/alt_gpio.h"       
+#include "hps_0l.h"
+
 
 #define HW_REGS_BASE ( ALT_STM_OFST )  
 #define HW_REGS_SPAN ( 0x04000000 )   
 #define HW_REGS_MASK ( HW_REGS_SPAN - 1 )
 
+//setting for the HPS2FPGA AXI Bridge
+#define ALT_AXI_FPGASLVS_OFST (0xC0000000) // axi_master
+#define HW_FPGA_AXI_SPAN (0x40000000) // Bridge span 1GB
+#define HW_FPGA_AXI_MASK ( HW_FPGA_AXI_SPAN - 1 )
+
+
 #define DREF(X) ( *(uint32_t *) X )
+#define DREFP(X) ( (uint64_t *) X )
 #define MAX_DATA_LEN 8192
 #define INIT_PORT 3400
 
@@ -57,12 +65,14 @@
 #define CASE_DATAGO 6
 #define CASE_SETPACKETSIZE 11
 #define CASE_MASKRECVCHANNELS 13
+#define CASE_QUERY_DATA 16
 #define CASE_KILLPROGRAM 17
 
 int RUN_MAIN = 1;
 
 // load user defined functions 
 #include "client_funcs.h"
+
 
 int main(int argc, char *argv[]) { printf("into main!\n");
 	

@@ -66,17 +66,8 @@ class a_funcs():
 		data = np.array([self.startcode,self.bcmd5,0,0,0,0,acmd,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 		 		
-	def loadincr_chipmem(self, n, m): # acmd = 11, 0b1011
-		if (n > 1) or (n < 0):
-			print "Argument 'n' of loadincr_chipmem(n,m) must be 0 or 1, defaulting to 1"
-			print "(n=0: increment on chip memory location by amount 'm' from last location)"
-			print "(n=1: set the on chip memory location to 'm')"
-			n = 0
-			
-		if (m > 2047):
-			print "Argument 'm' of loadincr_chipmem(n,m) must be less than 2048, defaulting to 0"
-			m = 0
-			
+	def loadincr_chipmem(self, n,m): # acmd = 11, 0b1011
+
 		acmd = 11
 		a = format(acmd,'04b')
 		q_val = format(m,'016b')
@@ -132,19 +123,16 @@ class a_funcs():
 		self.ser.write(data)
 				
 	def wait(self, n): # acmd = 4, 0b100
-		if self.newWait:
-			self.waitFloat(n)
-		else:
-			acmd = 4
-			a = format(acmd,'04b')
-			
-			bits = format(int(n),'028b')
-			byte1 = int('{}{}{}{}{}{}{}{}'.format(bits[24],bits[25],bits[26],bits[27],a[0],a[1],a[2],a[3]),2)
-			byte2 = int(bits[16:24],2)
-			byte3 = int(bits[8:16],2)
-			byte4 = int(bits[0:8],2)
-			data = np.array([self.startcode,self.bcmd5,0,byte4,byte3,byte2,byte1,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
-			self.ser.write(data)
+		acmd = 4
+		a = format(acmd,'04b')
+		
+		bits = format(int(n),'028b')
+		byte1 = int('{}{}{}{}{}{}{}{}'.format(bits[24],bits[25],bits[26],bits[27],a[0],a[1],a[2],a[3]),2)
+		byte2 = int(bits[16:24],2)
+		byte3 = int(bits[8:16],2)
+		byte4 = int(bits[0:8],2)
+		data = np.array([self.startcode,self.bcmd5,0,byte4,byte3,byte2,byte1,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		self.ser.write(data)
 				
 	def waitsec(self, t):
 		
@@ -152,9 +140,18 @@ class a_funcs():
 		if n < 0:
 			n = 0
 		
-		self.wait(n)
+		acmd = 4
+		a = format(acmd,'04b')
 		
-	def waitFloat(self, n): # acmd = 4, 0b100
+		bits = format(int(n),'028b')
+		byte1 = int('{}{}{}{}{}{}{}{}'.format(bits[24],bits[25],bits[26],bits[27],a[0],a[1],a[2],a[3]),2)
+		byte2 = int(bits[16:24],2)
+		byte3 = int(bits[8:16],2)
+		byte4 = int(bits[0:8],2)
+		data = np.array([self.startcode,self.bcmd5,0,byte4,byte3,byte2,byte1,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		self.ser.write(data)
+		
+	def waitFloat(self,n): # acmd = 4, 0b100
 		if n > 1.0995e12:
 			print 'Maximum wait must be less than 1.0995e+12, defaulting to 1s'
 			n = int(1e8)
@@ -199,59 +196,77 @@ class a_funcs():
 		
 		return
 			
-	def __init__(self, x, newWait=False):
-		### if initialized with newWait=True, 'wait' calls 'waitFloat' so syntax between new/old fpgas can be consistent
+	def __init__(self,x):
 		self.ser = x.ser
 		self.startcode = 170
 		self.endcode = 85
 		self.bcmd5 = 5
-		self.newWait = newWait
 
 
 		
 class b_funcs():
 	
-	def _bitSplit(self,p):
-		### split 'p' into four 8bit numbers using bitwise operations to send to the fpga
-		p0 = np.uint8( ( p & 0x000000ff ) )
-		p1 = np.uint8( ( p & 0x0000ff00 ) >> 8 )
-		p2 = np.uint8( ( p & 0x00ff0000 ) >> 16 )
-		p3 = np.uint8( ( p & 0xff000000 ) >> 24 )
-		
-		return p0,p1,p2,p3
-	
 	def stop_execution(self):
+		
+		bdaddr = 0
 		bcmd = 0
 		data = np.array([self.startcode,bcmd,0,0,0,0,0,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 		
-	def mask_off(self):		
+	def mask_off(self):
+		
 		bcmd = 13
-		data = np.array([self.startcode,bcmd,0,0xff,0xff,0xff,0xff,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		data = np.array([self.startcode,bcmd,0,255,255,255,255,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 		
-	def select_motherboard(self,n):		
+	def select_motherboard(self,n):
+		
 		bcmd = 10
 		data = np.array([self.startcode,bcmd,0,0,0,0,n % 256,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 		
 	def set_chipmem_wloc(self,n):
+		
 		bcmd = 6
-		div,rmd = divmod(n,256)
-		data = np.array([self.startcode,bcmd,0,0,0,div,rmd,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		data = np.array([self.startcode,bcmd,0,0,0,floor(n/256),n % 256,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 		
 	def set_imem_wloc(self,n):
+
 		bcmd = 4
-		div,rmd = divmod(n,256)
-		data = np.array([self.startcode,bcmd,0,0,0,div,rmd,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		data = np.array([self.startcode,bcmd,0,0,0,floor(n/256),n % 256,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
-	
-	def mask_all(self):
-		#  turn all channels on selected motherboard off
+
+	def set_mask_off_forcefully(self):
+		#~ %   Sends "b" command instruction to specify a channel mask.
+		#~ %   n represents the bit pattern for active and masked channels.
+		#~ %   1 = channel active
+		#~ %   0 = channel masked (off)
+		#~ %   n = 32 bit binary string
 
 		bcmd = 13
-		data = np.array([self.startcode,bcmd,0,0x00,0x00,0x00,0x00,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		p = list('00000000000000000000000000000000')
+		for nn in range(0,len(p)):
+			p[nn] = '1'
+		q = "".join(p)
+		q_val = q[::-1]
+		data = np.array([self.startcode,bcmd,0,int(q_val[0:8],2),int(q_val[8:16],2),int(q_val[16:24],2),int(q_val[24:32],2),self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		self.ser.write(data)	
+	
+	def set_mask_on_forcefully(self):
+		#~ %   Sends "b" command instruction to specify a channel mask.
+		#~ %   n represents the bit pattern for active and masked channels.
+		#~ %   1 = channel active
+		#~ %   0 = channel masked (off)
+		#~ %   n = 32 bit binary string
+
+		bcmd = 13
+		p = list('00000000000000000000000000000000')
+		#~ for nn in range(0,len(p)):
+			#~ p[nn] = '1'
+		q = "".join(p)
+		q_val = q[::-1]
+		data = np.array([self.startcode,bcmd,0,int(q_val[0:8],2),int(q_val[8:16],2),int(q_val[16:24],2),int(q_val[24:32],2),self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)	
 										
 	def set_mask(self,n):
@@ -259,45 +274,27 @@ class b_funcs():
 		#~ %   n represents the bit pattern for active and masked channels.
 		#~ %   1 = channel active
 		#~ %   0 = channel masked (off)
-		#~ %   n = 32 bit binary string or integer
-		
+		#~ %   n = 32 bit binary string
+
 		bcmd = 13
-		if isinstance(n,str):
-			n = int(n,2)
-		p0,p1,p2,p3 = self._bitSplit(np.uint32(n))
-		data = np.array([self.startcode,bcmd,0,p3,p2,p1,p0,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
-		self.ser.write(data)
-		
-	def set_mask_list(self,n):
-		bcmd = 13
-		
-		# check if n is only a single value and if so, turn it into a list for the next parts 
-		if isinstance(n,tuple) == 0 or isinstance(n,list) == 0: 
-			n = (n,)		
-					
-		q = np.uint32(0) 	# makes 32bit number, all bits equal 0	
-		for N in n: 		# sets bits 'N' in 'q' equal to 1 
-			q &= np.uint32(1<<N) 
-		p = ~q 				# flips all bits, so the mask shuts off the desired channels	
-		p0,p1,p2,p3 = self._bitSplit(p)
-		
-		data = np.array([self.startcode,bcmd,0,p3,p2,p1,p0,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		q_val = q[::-1]
+		data = np.array([self.startcode,bcmd,0,int(q_val[0:8],2),int(q_val[8:16],2),int(q_val[16:24],2),int(q_val[24:32],2),self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 		
 	def single_channel_mask(self,n):
-		# turns off all channels except 'n'	
+		
 		bcmd = 13
-		p = np.uint32(1<<n) # make p a 32bit number and set the nth bit to 1
-		
-		p0,p1,p2,p3 = self._bitSplit(p)
-		
-		data = np.array([self.startcode,bcmd,0,p3,p2,p1,p0,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		p = list('00000000000000000000000000000000')
+		if p > 0:
+			p[n-1] = '1'
+		q = "".join(p)
+		q_val = q[::-1]
+		data = np.array([self.startcode,bcmd,0,int(q_val[0:8],2),int(q_val[8:16],2),int(q_val[16:24],2),int(q_val[24:32],2),self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 
 	def execute_program(self,n):
 		bcmd = 1
-		div,rmd = divmod(n,256)
-		data = np.array([self.startcode,bcmd,0,0,0,div,rmd,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
+		data = np.array([self.startcode,bcmd,0,0,0,floor(n/256),n % 256,self.endcode,1,1,1,1,1,1,1,1],dtype='uint8')
 		self.ser.write(data)
 		
 	def write_chipmem(self,n):
@@ -314,7 +311,8 @@ class b_funcs():
 		#
 		# For example, data(5) = 46
 		# This is 46 clock tics of phase delay or charge time for channel 5
-	
+		
+		
 		for i in xrange(0,len(data),2):
 			bindata_tmp1 = format(int(data[i]),'016b')
 			bindata_tmp2 = format(int(data[i+1]),'016b')

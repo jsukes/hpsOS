@@ -1,21 +1,22 @@
 
-#include <sys/types.h>
-#include <sys/socket.h>
+//~ #include <sys/types.h> # unused
+//~ #include <sys/socket.h> # unused
 #include <sys/un.h>
-#include <sys/mman.h>
+//~ #include <sys/mman.h> # unused
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
+//~ #include <stdint.h> # unused
+//~ #include <string.h> # unused
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <errno.h>
-#include <sys/time.h>
-#include <time.h>
-#include <math.h>
+//~ #include <errno.h> # unused
+//~ #include <sys/time.h> # unused
+//~ #include <time.h> # unused
+//~ #include <math.h> # unused
+
 
 #define INIT_PORT 3400
 #define MAX_FPGAS 64
@@ -38,6 +39,7 @@
 #define CASE_SET_CHANNEL_MASK 13
 #define CASE_GET_BOARD_COUNT 14
 #define CASE_GET_BOARD_NUMS 15
+#define CASE_QUERY_DATA 16
 #define CASE_SHUTDOWN_SERVER 17
 
 const int ONE = 1;  /* need to have a variable that can be pointed to that always equals '1' for some of the socket options */
@@ -656,6 +658,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;
 						}
 						
+						case(CASE_QUERY_DATA):{
+							sendENETmsg(&ENET,fmsg.msg,maxboard);
+							printf("waiting for data\n\n");                
+                            break;
+						}
+						
                         case(CASE_SHUTDOWN_SERVER):{
                             /* This shuts down the SoCs and cServer 
                                 note on the variables in fmgs:
@@ -717,6 +725,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 k++;
                                 ENET.p_idx[n] = 0;
                                 ENET.dataState[n] = 1;
+                                printf("BOARD %d, data done\n",ENET.board[n]); 
                             }
                         } else {
                             k++;
