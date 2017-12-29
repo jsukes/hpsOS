@@ -537,7 +537,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 						
 						case(CASE_QUERY_DATA):{
 							sendENETmsg(&ENET,fmsg.msg,maxboard);
-							printf("waiting for data\n\n");                
+							//printf("waiting for data\n\n");                
                             break;
 						}
 						
@@ -600,7 +600,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                to keep track of how many boards have completed data transfer */
                             k++;
                             ENET.p_idx[n] = 0;
-                            printf("BOARD %d, data done\n",ENET.board[n]); 
+                            //printf("BOARD %d, data done\n",ENET.board[n]); 
                         }
                         if( k == maxboard ){ 
                             /* if all data from all SoCs has been collected and transfered to the cServer, let the python UI know so it can move on
