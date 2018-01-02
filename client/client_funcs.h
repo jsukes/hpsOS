@@ -8,6 +8,12 @@ struct ENETsock{ // structure to store ethernet variables
 };
 
 
+struct ENETdata{
+    uint32_t dataLen;
+    char dataArray[MAX_DATA_LEN*8];
+};
+
+
 struct FPGAvars{ // structure to hold variables that are mapped to the FPGA hardware registers
 	void *virtual_base;
 	void *axi_virtual_base;
@@ -147,10 +153,27 @@ void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ /
 }
 
 
+void zlibDeflator(uint32_t *data, int g, struct ENETdata *Edata){
+    z_stream defstream;
+    defstream.zalloc = Z_NULL;
+    defstream.zfree = Z_NULL;
+    defstream.opaque = Z_NULL;
+    defstream.avail_in = (uInt)(g*sizeof(uint32_t));
+    defstream.next_in = (Bytef *)data;
+    defstream.avail_out = (uInt)(g*sizeof(uint32_t));
+    defstream.next_out = (Bytef *)Edata->dataArray;
+    deflateInit(&defstream,Z_DEFAULT_COMPRESSION);
+    deflate(&defstream,Z_FINISH);
+    deflateEnd(&defstream);
+    Edata->dataLen = strlen(Edata->dataArray);
+
+}
+
 void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that talks to the FPGA and transmits data to the SoCs
    
-    struct FPGAvars FPGA;	
-    
+    struct FPGAvars FPGA;
+    struct ENETdata Edata;
+
 	uint32_t pipemsg[4] = {0};
 	int nready; 
     uint32_t n,m;
@@ -259,7 +282,9 @@ void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that ta
 						
 						if(tmp<1000){	
 							d32 = DREFP(FPGA.onchip1);
+                            //zlibDeflator(d32,2*recLen*sizeof(uint32_t),&Edata);
 							write(sv,d32,2*recLen*sizeof(uint32_t));
+                            //write(sv,&Edata,sizeof(Edata));
 						}
                         DREF(FPGA.stateReset) = 1; 
                         usleep(10);
