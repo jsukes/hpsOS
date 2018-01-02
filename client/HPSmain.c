@@ -25,9 +25,8 @@
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h> // unused
-#include <string.h> // unused
-#include <zlib.h>
+//~ #include <stdint.h> // unused
+//~ #include <string.h> // unused
 #include <unistd.h> 
 #include <fcntl.h>
 #include <signal.h>

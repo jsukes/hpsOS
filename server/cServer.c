@@ -7,8 +7,8 @@
 #include <netinet/tcp.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h> // unused
-#include <string.h> // unused
+//~ #include <stdint.h> # unused
+//~ #include <string.h> # unused
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -235,50 +235,6 @@ void resetFPGAdataAcqParams(struct ENETsock *ENET, unsigned long maxboard){ /* f
     
     fmsg[0] = CASE_SET_SOC_TRANSMIT_READY_TIMEOUT; fmsg[1] = g_socTransReadyTimeout;
     sendENETmsg(ENET,fmsg,maxboard);
-}
-
-
-void zlibDeflator(uint32_t *data,int g){
-    printf("df0,%d\n",sizeof(data));
-    char *a;
-    char *b;
-    char *c;
-    a = (char *)malloc(g*sizeof(uint32_t));
-    b = (char *)malloc(g*sizeof(uint32_t));
-    c = (char *)malloc(g*sizeof(uint32_t));
-    memcpy(a,data,g*sizeof(uint32_t));
-    printf("df0b\n");
-    z_stream defstream;
-    defstream.zalloc = Z_NULL;
-    defstream.zfree = Z_NULL;
-    defstream.opaque = Z_NULL;
-    defstream.avail_in = (uInt)(g*sizeof(uint32_t));
-    defstream.next_in = (Bytef *)a;
-    defstream.avail_out = (uInt)(g*sizeof(uint32_t));
-    defstream.next_out = (Bytef *)b;
-    printf("df1\n");
-    deflateInit(&defstream,Z_DEFAULT_COMPRESSION);
-    printf("df2\n");
-    deflate(&defstream,Z_FINISH);
-    printf("df3\n");
-    deflateEnd(&defstream);
-    printf("deflated size is: %lu\n",(char *)defstream.next_out-b);
-    printf("a,b = %lu,%lu\n",strlen(a),strlen(b));
-
-    z_stream infstream;
-    infstream.zalloc = Z_NULL;
-    infstream.zfree = Z_NULL;
-    infstream.opaque = Z_NULL;
-    infstream.avail_in = (uInt)((char*)defstream.next_out-b);
-    infstream.next_in = (Bytef *)b;
-    infstream.avail_out = (uInt)(g*sizeof(uint32_t));
-    infstream.next_out = (Bytef *)c;
-    inflateInit(&infstream);
-    inflate(&infstream,Z_NO_FLUSH);
-    inflateEnd(&infstream);
-
-    printf("c = %lu\n",strlen(c));
-    memcpy(data,c,g*sizeof(uint32_t));
 }
 
 
@@ -551,8 +507,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 - msg[1], msg[2], and msg[3] are unused
                                 - buff contains the name of the file to save the data in. (the string in 'buff' is limited to 100 characters)
                             */ 
-                            FILE *datafile = fopen(fmsg.buff,"wb");
-                            zlibDeflator(data,maxboard*g_idx1len*g_idx2len*g_idx3len*2*g_recLen);
+                            FILE *datafile = fopen(fmsg.buff,"wb"); 
                             fwrite(data,sizeof(uint32_t),maxboard*g_idx1len*g_idx2len*g_idx3len*2*g_recLen,datafile);
                             fclose(datafile);
                             printf("data saved to file %s\n\n",fmsg.buff);
