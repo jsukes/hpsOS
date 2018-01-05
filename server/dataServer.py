@@ -180,12 +180,7 @@ class dataServer():
 		msg = struct.pack(self.cmsg,1,self.recLen,0,0,"")
 		self.ff.write(msg)
 		time.sleep(0.05)
-		if self.recLen < self.packetSize:
-			self.packetSize = self.recLen
-			msg = struct.pack(self.cmsg,11,self.packetSize,0,0,"")
-			self.ff.write(msg)
-			print 'Record Length less than previous packet size, packet size set to record length (', self.packetSize,')'
-			time.sleep(0.05)
+		
 			
 	def setSocTransReadyTimeout(self,to):
 		# sets how often the SoCs check whether they have data ready to transmit. takes integer 'to' as input, units = us. lower values make the SoC check for data more frequently but burns cpu time by checking more frequently/busy waiting. should be set as high as possible without slowing down the program or otherwise effecting performance.
@@ -341,7 +336,6 @@ class dataServer():
 		
 		# default values of data acquisition variables
 		self.trigDelay = 0
-		self.packetSize = 1024
 		self.da = 0
 		self.dataAcqMode = 0
 		self.timeOut = 1e3

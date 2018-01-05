@@ -1,7 +1,7 @@
 
 
 struct ENETsock{ // structure to store ethernet variables
-	int sockfd;
+	int sockfd[N_PORTS];
 	int portNum;
 	const char *server_addr;
 	struct sockaddr_in server_sockaddr;
@@ -119,172 +119,143 @@ void getBoardData(int argc, char *argv[], int *boardData){ // load the boards sp
 void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ // connect to the cServer through ethernet
 	struct timeval t0,t1;
 	int diff;
-    int one = 1;
-	ENET->server_addr = serverIP;	
-	ENET->sockfd = socket(AF_INET, SOCK_STREAM, 0);
-	ENET->server_sockaddr.sin_port = htons(INIT_PORT);
-	ENET->server_sockaddr.sin_family = AF_INET;
-	ENET->server_sockaddr.sin_addr.s_addr = inet_addr(ENET->server_addr);
-	
-	gettimeofday(&t0,NULL);
-	
-	if(connect(ENET->sockfd, (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){		
-		while(connect(ENET->sockfd, (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){
-			gettimeofday(&t1,NULL);
-			diff = (t1.tv_sec-t0.tv_sec);
-			if(diff>(600)){
-				printf("NO CONNECT!!!!\n");
-				break;
-			}	
+    int a = 65536*2;
+    int rcvbuff;
+    int pn;
+    
+    for(pn=0;pn<N_PORTS;pn++){
+		ENET->server_addr = serverIP;	
+		ENET->sockfd[pn] = socket(AF_INET, SOCK_STREAM, 0);
+		ENET->server_sockaddr.sin_port = htons(INIT_PORT+pn);
+		ENET->server_sockaddr.sin_family = AF_INET;
+		ENET->server_sockaddr.sin_addr.s_addr = inet_addr(ENET->server_addr);
+		
+		gettimeofday(&t0,NULL);
+		
+		if(connect(ENET->sockfd[pn], (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){		
+			while(connect(ENET->sockfd[pn], (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){
+				gettimeofday(&t1,NULL);
+				diff = (t1.tv_sec-t0.tv_sec);
+				if(diff>(600)){
+					printf("NO CONNECT!!!!\n");
+					break;
+				}	
+			}
 		}
+		
+		setsockopt(ENET->sockfd[pn],SOL_SOCKET,SO_SNDBUF,&a,sizeof(int));	
+	    setsockopt(ENET->sockfd[pn],IPPROTO_TCP,TCP_NODELAY,&ONE,sizeof(int));
+	    int tmpmsg[4] = {0};
+		tmpmsg[0] = boardNum;
+		tmpmsg[1] = pn;
+		send(ENET->sockfd[pn], &tmpmsg, 4*sizeof(int), 0);
+	    setsockopt(ENET->sockfd[pn],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
 	}
-	
-    setsockopt(ENET->sockfd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(int));	
-    int tmpmsg[4] = {0};
-	tmpmsg[0] = boardNum;
-	send(ENET->sockfd, &tmpmsg, 4*sizeof(int), 0);
-    setsockopt(ENET->sockfd,IPPROTO_TCP,TCP_QUICKACK,&one,sizeof(int));	
 }
 
 
-void FPGA_dataAcqController(int inPipe, int outPipe, int sv){ // process that talks to the FPGA and transmits data to the SoCs
-   
-    struct FPGAvars FPGA;	
-    
-	uint32_t pipemsg[4] = {0};
-	int nready; 
-    uint32_t n,m;
-    uint32_t *d32;
-   
-    if( FPGA_init(&FPGA) == 1 ){
-		pipemsg[0] = 0; pipemsg[1] = 1;
-	} else {
-		pipemsg[0] = 0; pipemsg[1] = 0;
-	}
-	
-    // local version of runtime variables 
-	uint32_t recLen = 2048;
+void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENETsock *ENET){ // process that talks to the FPGA and transmits data to the SoCs
 
-    // variables for select loop
-	int maxfd, sec, usec;
 	struct timeval tv;
-	fd_set readfds;
-	maxfd = inPipe;
-	sec = 0; usec = 1000;
-	
+	uint32_t *dtmp;//[2*MAX_DATA_LEN];
 	struct timeval t0,t1,t2,t3;
 	int tmp,diff;
-
-	int runHPS = 1; // flag to run this process, 0 ends the program running on the SoC
-	int dataGo = 0; // flag to tell SoC whether it's in a data acquisition mode or not
-
-	while(runHPS == 1){
-		tv.tv_sec = sec;
-		tv.tv_usec = usec;
-		FD_ZERO(&readfds);
-		FD_SET(inPipe,&readfds);
-		
-		nready = select(maxfd+1,&readfds,NULL,NULL,&tv);
-
-		if( nready > 0 ){
-			if(FD_ISSET(inPipe, &readfds)){
-
-				n = read(inPipe,&pipemsg,4*sizeof(uint32_t));
-				if(n == 0){ // connection closed or parent terminated
-                    runHPS = 0;
-                    break;
-                }
+	int n,ps;
+	ps = (g_recLen-1)/PACKET_WIDTH+1;
+	
 				
-                switch(pipemsg[0]){
-					case(CASE_TRIGDELAY):{ // change trig delay
-						DREF(FPGA.trigDelay) = 20*pipemsg[1];
-						printf("trig Delay set to %.2f\n",(float)DREF(FPGA.trigDelay)/20.0);
-						break;
-					}
+	switch(pipemsg[0]){
 
-					case(CASE_RECLEN):{ // change record length
-						DREF(FPGA.transReady) = 0;
-						if(pipemsg[1]<MAX_DATA_LEN){
-							DREF(FPGA.recLen) = pipemsg[1];
-							recLen = DREF(FPGA.recLen);
-							printf("recLen set to %zu\n",DREF(FPGA.recLen));
+		case(CASE_TRIGDELAY):{ // change trig delay
+			DREF(FPGA->trigDelay) = 20*pipemsg[1];
+			printf("trig Delay set to %.2f\n",(float)DREF(FPGA->trigDelay)/20.0);
+			break;
+		}
+
+		case(CASE_RECLEN):{ // change record length
+			DREF(FPGA->transReady) = 0;
+			if(pipemsg[1]>0 && pipemsg[1]<MAX_DATA_LEN){
+				DREF(FPGA->recLen) = pipemsg[1];
+				g_recLen = DREF(FPGA->recLen);
+				ps = (g_recLen-1)/PACKET_WIDTH+1;
+				printf("recLen set to %zu\n",DREF(FPGA->recLen));
+			} else {
+				DREF(FPGA->recLen) = 2048;
+				g_recLen = DREF(FPGA->recLen);
+				ps = (g_recLen-1)/PACKET_WIDTH+1;
+				printf("invalid recLen, defaulting to 2048\n");
+			}
+			break;
+		}
+
+		case(CASE_TRANSREADY_TIMEOUT):{ // change select loop timeout/how often transReady is checked (min 10us)
+			if(pipemsg[1] > 9 && pipemsg[1] <10000000){
+				tv.tv_sec = pipemsg[1]/1000000;
+				tv.tv_usec = pipemsg[1]%1000000; 
+			} else {
+				tv.tv_sec = 0;
+				tv.tv_usec = 1000;
+			}
+			printf("timeout set to %lus + %luus\n",tv.tv_sec,tv.tv_usec);
+			break;
+		}
+
+		case(CASE_CLOSE_PROGRAM):{ // close process fork
+			printf("closing program\n");
+			FPGAclose(FPGA);
+			break;
+		}
+
+		case(CASE_DATAGO):{ // if dataGo is zero it won't transmit data to server, basically a wait state
+			if(pipemsg[1] == 1){
+				printf("dataAcqGo set to 1\n");
+
+			} else {
+				printf("dataAcqGo set to 0\n");
+
+			}
+			DREF(FPGA->stateReset) = 1; 
+			DREF(FPGA->read_addr) = 0;
+			DREF(FPGA->stateReset) = 0;
+			break;
+		}
+
+		case(CASE_QUERY_DATA):{
+			while( DREF(FPGA->transReady) == 0 && ++tmp<1000){
+				usleep(10);
+			}
+			
+			if(tmp<1000){
+				dtmp = DREFP(FPGA->onchip1);
+				for(n=0;n<ps;n++){
+					if(n!=(ps-1)){
+						send(ENET->sockfd[n],&dtmp[2*n*PACKET_WIDTH],2*PACKET_WIDTH*sizeof(uint32_t),0);
+					} else {
+						if(g_recLen%PACKET_WIDTH > 0){
+							send(ENET->sockfd[n],&dtmp[2*n*PACKET_WIDTH],2*(g_recLen%PACKET_WIDTH)*sizeof(uint32_t),0);
 						} else {
-							DREF(FPGA.recLen) = 2048;
-							recLen = DREF(FPGA.recLen);
-                            printf("invalid recLen, defaulting to 2048\n");
+							send(ENET->sockfd[n],&dtmp[2*n*PACKET_WIDTH],2*PACKET_WIDTH*sizeof(uint32_t),0);
 						}
-						break;
 					}
-
-					case(CASE_TRANSREADY_TIMEOUT):{ // change select loop timeout/how often transReady is checked (min 10us)
-						if(pipemsg[1] > 9 && pipemsg[1] <10000000){
-							sec = pipemsg[1]/1000000;
-							usec = pipemsg[1]%1000000; 
-							tv.tv_sec = sec;
-							tv.tv_usec = usec;
-						} else {
-							tv.tv_sec = 0;
-							tv.tv_usec = 1000;
-						}
-                        printf("timeout set to %lus + %luus\n",tv.tv_sec,tv.tv_usec);
-						break;
-					}
-
-					case(CASE_CLOSE_PROGRAM):{ // close process fork
-                        printf("closing program\n");
-						FPGAclose(&FPGA);
-						dataGo = 0;
-						runHPS = 0;
-						break;
-					}
-
-					case(CASE_DATAGO):{ // if dataGo is zero it won't transmit data to server, basically a wait state
-                        if(pipemsg[1] == 1){
-                            printf("dataAcqGo set to 1\n");
-							dataGo = 1;
-						} else {
-                            printf("dataAcqGo set to 0\n");
-							dataGo = 0;
-						}
-                        DREF(FPGA.stateReset) = 1; 
-                        DREF(FPGA.read_addr) = 0;
-                        DREF(FPGA.stateReset) = 0;
-						break;
-					}
-    
-					case(CASE_QUERY_DATA):{
-						while( DREF(FPGA.transReady) == 0 && ++tmp<1000){
-							usleep(10);
-						}
-						
-						if(tmp<1000){	
-							d32 = DREFP(FPGA.onchip1);
-							write(sv,d32,2*recLen*sizeof(uint32_t));
-						}
-                        DREF(FPGA.stateReset) = 1; 
-                        usleep(10);
-						DREF(FPGA.read_addr) = DREF(FPGA.recLen)+10;
-						DREF(FPGA.read_addr) = 0;
-						DREF(FPGA.stateReset) = 0;
-						tmp = 0;
-                        break;	
-					}
-					
-					default:{
-                        printf("default case, shutting down\n");
-						FPGAclose(&FPGA);
-						runHPS = 0;
-						dataGo = 0;
-						break;
-					}
+					setsockopt(ENET->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
 				}
 			}
-        }
-    }
-	printf("dataAcq loop broken\n");
-	close(inPipe); close(outPipe);
-    FPGAclose(&FPGA);
-	_exit(0);
+
+			DREF(FPGA->stateReset) = 1; 
+			usleep(10);
+			DREF(FPGA->read_addr) = g_recLen;
+			DREF(FPGA->read_addr) = 0;
+			DREF(FPGA->stateReset) = 0;
+			tmp = 0;
+			break;	
+		}
+		
+		default:{
+			printf("default case, shutting down\n");
+			FPGAclose(FPGA);
+			break;
+		}
+	}
 }
 
 
