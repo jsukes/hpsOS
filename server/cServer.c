@@ -666,7 +666,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 							ENET.p_idx[n] = 0;
                             /* after each channel has read in all the data its supposed to for each pulse, p_idx is reset to 0. 'k' is a counter
                                to keep track of how many boards have completed data transfer */
-							printf("N:%d, dt: %d, nrecv:%d\n",n,diff[n],n0[n]);
+							//~ printf("N:%d, dt: %d, nrecv:%d\n",n,diff[n],n0[n]);
 							diff[n]=0; n0[n]=0;
                         }
                         if( n%N_PORTS == g_recLen/PACKET_WIDTH && g_recLen%PACKET_WIDTH > 0 ){
@@ -675,7 +675,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 								ENET.p_idx[n] = 0;
 								/* after each channel has read in all the data its supposed to for each pulse, p_idx is reset to 0. 'k' is a counter
 								   to keep track of how many boards have completed data transfer */
-								printf("N:%d, dt: %d, nrecv:%d\n",n,diff[n],n0[n]);
+								//~ printf("N:%d, dt: %d, nrecv:%d\n",n,diff[n],n0[n]);
 								diff[n]=0; n0[n]=0;
 							}
 						}
