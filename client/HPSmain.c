@@ -60,7 +60,6 @@
 // case flags for switch statement in FPGA_dataAcqController
 #define CASE_TRIGDELAY 0
 #define CASE_RECLEN 1
-#define CASE_TRANSREADY_TIMEOUT 2
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
 #define CASE_QUERY_DATA 16
@@ -84,13 +83,10 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	struct FPGAvars FPGA;
 	FPGA_init(&FPGA);
 	
-    uint32_t *dtmp;
-	
 	uint32_t enetmsg[4] = {0}; // messaging variable to handle messages from cServer
     
 	// loads board-specific data from onboard file
     int boardData[3];
-    int rdcnt;
 	getBoardData(argc,argv,boardData); 
 	
 	// create ethernet socket to communicate with server and establish connection

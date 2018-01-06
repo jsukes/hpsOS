@@ -181,18 +181,6 @@ class dataServer():
 		self.ff.write(msg)
 		time.sleep(0.05)
 		
-			
-	def setSocTransReadyTimeout(self,to):
-		# sets how often the SoCs check whether they have data ready to transmit. takes integer 'to' as input, units = us. lower values make the SoC check for data more frequently but burns cpu time by checking more frequently/busy waiting. should be set as high as possible without slowing down the program or otherwise effecting performance.
-		if (to>=TRANS_READY_TIMEOUT_MIN):
-			self.timeOut = int(to)
-		else:
-			self.timeOut = 1e3
-			print 'Invalid Timeout value, defaulting to 1000us. [ Valid values >= 10us ]'
-		msg = struct.pack(self.cmsg,2,self.timeOut,0,0,"")
-		self.ff.write(msg)
-		time.sleep(0.05)
-		
 	def setDataArraySize(self,l1,l2,l3):
 		# used to define the amount of data that will be collected during the experiment. takes integer values 'l1','l2', and 'l3' as input, unitless. memory must be allocated in the cServer before data acquisition begins. data is stored in a 5D array of size [l1,l2,l3,2*recLen,(number of receiving boards)], these values give the size of the first 3 dimensions of the data array in the cServer. 
 		if ( l1 >= 0 ) and ( l2 >= 0 ) and ( l3 >= 0 ):

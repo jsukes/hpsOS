@@ -120,7 +120,6 @@ void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ /
 	struct timeval t0,t1;
 	int diff;
     int a = 65536*2;
-    int rcvbuff;
     int pn;
     
     for(pn=0;pn<N_PORTS;pn++){
@@ -156,10 +155,9 @@ void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ /
 
 void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENETsock *ENET){ // process that talks to the FPGA and transmits data to the SoCs
 
-	struct timeval tv;
 	uint32_t *dtmp;//[2*MAX_DATA_LEN];
-	struct timeval t0,t1,t2,t3;
-	int tmp,diff;
+
+	int tmp = 0;
 	int n,ps;
 	ps = (g_recLen-1)/PACKET_WIDTH+1;
 	
@@ -188,18 +186,6 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 			break;
 		}
 
-		case(CASE_TRANSREADY_TIMEOUT):{ // change select loop timeout/how often transReady is checked (min 10us)
-			if(pipemsg[1] > 9 && pipemsg[1] <10000000){
-				tv.tv_sec = pipemsg[1]/1000000;
-				tv.tv_usec = pipemsg[1]%1000000; 
-			} else {
-				tv.tv_sec = 0;
-				tv.tv_usec = 1000;
-			}
-			printf("timeout set to %lus + %luus\n",tv.tv_sec,tv.tv_usec);
-			break;
-		}
-
 		case(CASE_CLOSE_PROGRAM):{ // close process fork
 			printf("closing program\n");
 			FPGAclose(FPGA);
@@ -209,10 +195,8 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 		case(CASE_DATAGO):{ // if dataGo is zero it won't transmit data to server, basically a wait state
 			if(pipemsg[1] == 1){
 				printf("dataAcqGo set to 1\n");
-
 			} else {
 				printf("dataAcqGo set to 0\n");
-
 			}
 			DREF(FPGA->stateReset) = 1; 
 			DREF(FPGA->read_addr) = 0;
@@ -237,7 +221,7 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 							send(ENET->sockfd[n],&dtmp[2*n*PACKET_WIDTH],2*PACKET_WIDTH*sizeof(uint32_t),0);
 						}
 					}
-					setsockopt(ENET->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+					setsockopt(ENET->sockfd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
 				}
 			}
 
