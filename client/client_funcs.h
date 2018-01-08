@@ -119,7 +119,7 @@ void getBoardData(int argc, char *argv[], int *boardData){ // load the boards sp
 void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ // connect to the cServer through ethernet
 	struct timeval t0,t1;
 	int diff;
-    int a = 65536*2;
+    //int a = 65536*2;
     int pn;
     
     for(pn=0;pn<N_PORTS;pn++){
@@ -142,7 +142,7 @@ void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ /
 			}
 		}
 		
-		setsockopt(ENET->sockfd[pn],SOL_SOCKET,SO_SNDBUF,&a,sizeof(int));	
+		//setsockopt(ENET->sockfd[pn],SOL_SOCKET,SO_SNDBUF,&a,sizeof(int));	
 	    setsockopt(ENET->sockfd[pn],IPPROTO_TCP,TCP_NODELAY,&ONE,sizeof(int));
 	    int tmpmsg[4] = {0};
 		tmpmsg[0] = boardNum;
@@ -205,7 +205,7 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 		}
 
 		case(CASE_QUERY_DATA):{
-			while( DREF(FPGA->transReady) == 0 && ++tmp<1000){
+			while( DREF(FPGA->transReady) == 0 && ++tmp<1000 ){
 				usleep(10);
 			}
 			

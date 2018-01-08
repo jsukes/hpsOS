@@ -165,7 +165,7 @@ class dataServer():
 			self.trigDelay = 0
 			
 		msg = struct.pack(self.cmsg,0,self.trigDelay,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
 	def setRecLen(self,rl):
@@ -178,7 +178,7 @@ class dataServer():
 			self.recLen = 2048
 			
 		msg = struct.pack(self.cmsg,1,self.recLen,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
 	def setDataArraySize(self,l1,l2,l3):
@@ -191,13 +191,13 @@ class dataServer():
 			self.l1, self.l2, self.l3 = 1,1,1
 			print 'Error all indices must be greater than or equal to 0, setting all equal to 1'
 		msg = struct.pack(self.cmsg,4,self.l1,self.l2,self.l3,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
 	def allocateDataArrayMemory(self):
 		# tells the cServer to allocate the memory for the data to be stored in based on the inputs from the 'setRecLen' and 'setDataArraySize' commands
 		msg = struct.pack(self.cmsg,5,1,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		self.getBoardCount()
 		
@@ -211,7 +211,7 @@ class dataServer():
 			self.da = 0
 			print 'Invalid dataAcqStart value. Must be 0 (dataAcq = off) or 1 (dataAcq = on). Defaulting to 0 (off)'
 		msg = struct.pack(self.cmsg,6,self.da,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		time.sleep(0.05)
 
 	def declareDataAcqIdx(self,id1,id2,id3):
@@ -219,36 +219,36 @@ class dataServer():
 		if (id1 >= 0) and (id1 < self.l1) and (id2 >= 0) and (id2 < self.l2) and (id3 >= 0) and (id3 < self.l3):
 			self.id1,self.id2,self.id3 = int(id1),int(id2),int(id3)
 			msg = struct.pack(self.cmsg,7,id1,id2,id3,"")
-			self.ff.write(msg)
+			self.ipcsock.send(msg)
 		else:
 			print 'Invalid index value detected, turning off data acquisition. Valid index value ranges -> idx1[ 0 -',self.l1,'], idx2[ 0 -',self.l2,'], idx3[ 0 -',self.l3,'].\nValues detected -> [ idx1 =',id1,'], [ idx2 =',id2,'], [ idx3 =',id3,']'
 			msg = struct.pack(self.cmsg,6,0,0,0,"")
-			self.ff.write(msg)
+			self.ipcsock.send(msg)
 			time.sleep(0.05)
 						
 	def closeFPGA(self): 
 		# shuts down the program running on the SoCs but not the cServer.
 		msg = struct.pack(self.cmsg,8,0,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
 	def resetVars(self):
 		# this function restores the variables in the cServer and SoCs to their default values
 		msg = struct.pack(self.cmsg,9,0,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
 	def saveData(self,fname):
 		# this function tells the cServer to save the acquired data into a binary file named 'fname'. takes string 'fname' as input, 'fname' must be less than or equal to 100 characters long
 		msg = struct.pack(self.cmsg,10,0,0,0,fname)
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
 	def getData(self):
 		# this function tells the cServer to transfer the array it is storing the data in directly to the python server for the user to do with what they want. this function returns a binary array containing the data to the user. 
 		if (self.boardCount > 0):
 			msg = struct.pack(self.cmsg,12,0,0,0,"")
-			self.ff.write(msg)
+			self.ipcsock.send(msg)
 			return self.ipcsock.recv(2*self.recLen*self.l1*self.l2*self.l3*self.boardCount*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
 		else:
 			print 'Invalid number of boards detected,returning single value \'0\' '
@@ -270,7 +270,7 @@ class dataServer():
 	def getBoardCount(self):
 		# gets the number of boards connected to the cServer
 		msg = struct.pack(self.cmsg,14,0,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 		self.boardCount = struct.Struct('=I').unpack(self.ipcsock.recv(4,socket.MSG_WAITALL))[0]
 		return self.boardCount
 	
@@ -282,7 +282,7 @@ class dataServer():
 			
 		if self.boardCount > 0:
 			msg = struct.pack(self.cmsg,15,0,0,0,"")
-			self.ff.write(msg)
+			self.ipcsock.send(msg)
 			self.boardNums = np.array(struct.Struct('{}{}{}'.format('=',self.boardCount,'I')).unpack(self.ipcsock.recv(self.boardCount*4,socket.MSG_WAITALL)))
 		else:
 			self.boardNums = 0
@@ -293,25 +293,26 @@ class dataServer():
 	def queryData(self):
 		# makes the socs check for data 
 		msg = struct.pack(self.cmsg,16,0,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
 			
 	def shutdown(self):
 		# shuts down the SoCs and C server
-		self.ipcsock.close()
+		
 		msg = struct.pack(self.cmsg,17,0,0,0,"")
-		self.ff.write(msg)
+		self.ipcsock.send(msg)
+		self.ipcsock.close()
 		time.sleep(0.05)
 
 	def disconnect(self): 
 		# disconnect python from the C server but leave it running in the background so you can reconnect to it later
 		self.ipcsock.close()
-		self.ff.close()
+		#~ self.ff.close()
 		time.sleep(0.05)
 		
 	def connect(self): 
 		# connect to the C server. 
 		# Note: python will block until it is connected to the cServer. if the python program gets 'stuck' before it begins it's likely because the cServer stopped running or crashed, just relaunch and python should connect to it. You don't have to restart python before (re)launching the cServer, but if it still hangs or returns an error restart them both. If it still doesn't work, delete the files 'data_pipe' and 'lithium_ipc' in the folder containing the cServer and restart the cServer and python program again. 
-		self.ff = open(self.IPCFIFO,"w",0)
+		#~ self.ff = open(self.IPCFIFO,"w",0)
 		self.ipcsock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 		self.ipcsock.connect(self.IPCSOCK)
 	
@@ -319,7 +320,7 @@ class dataServer():
 		# class intialization for the python data server 
 		
 		self.IPCSOCK = "./lithium_ipc"	# name of the ipc socket to connect to the cServer through
-		self.IPCFIFO = "data_pipe"		# name of the FIFO to connect to the cServer through
+		#~ self.IPCFIFO = "data_pipe"		# name of the FIFO to connect to the cServer through
 		self.cmsg = '4I100s'			# tells python how to package messages to send to the cServer -> [4*(unsinged 32-bit int), string (up to 100 characters)]
 		
 		# default values of data acquisition variables
