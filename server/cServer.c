@@ -135,8 +135,6 @@ void sortENETconnections(struct ENETsock *ENET){ /* sorts ENET connections logic
 			ENET->clifd[k] = clifd;
 		}
 	}
-	//~ for(n=0;n<MAX_FPGAS;n++)
-		//~ if( ENET->board[n] >0 )printf("board %d\n",ENET->board[n]);
 }
 
 
