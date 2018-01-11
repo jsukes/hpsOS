@@ -65,7 +65,7 @@
 #define CASE_QUERY_DATA 16
 #define CASE_KILLPROGRAM 17
 
-#define N_PORTS 8
+#define N_PORTS 17
 #define PACKET_WIDTH 1024
 
 int RUN_MAIN = 1;
@@ -90,13 +90,14 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	getBoardData(argc,argv,boardData); 
 	
 	// create ethernet socket to communicate with server and establish connection
-	struct ENETsock ENET;
-	setupENETsock(&ENET,argv[1],boardData[0]);
+	struct ENETsock ENET = {.serverIP=argv[1],.boardNum=boardData[0]};
+	setupENETsock(&ENET,0);
+    setupENETsock(&ENET,1);
+    setupENETsock(&ENET,2);
     
 
 	// declare and initialize variables for the select loop
-	int maxfd,n;
-	maxfd = ENET.sockfd[0];
+	int n;
 	
 	int nready,nrecv;
 	fd_set readfds;
@@ -107,9 +108,13 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	    tv.tv_sec = 0;
 	    tv.tv_usec = 10000;
 		FD_ZERO(&readfds);
-		FD_SET(ENET.sockfd[0],&readfds);
-		
-		nready = select(maxfd+1, &readfds, (fd_set *) 0, (fd_set *) 0, &tv);
+        for(n=0;n<N_PORTS;n++){
+            if(ENET.sockfd[n]!=0){
+		        FD_SET(ENET.sockfd[n],&readfds);
+            }
+		}
+
+		nready = select(ENET.maxfd+1, &readfds, (fd_set *) 0, (fd_set *) 0, &tv);
 		
 		if( nready > 0 ){
 			if( FD_ISSET( ENET.sockfd[0], &readfds ) ){ // incoming message from cServer
@@ -127,6 +132,25 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 				}
 
 			}
+            for(n=1;n<N_PORTS;n++){
+                if(ENET.sockfd[n]!=0 && FD_ISSET(ENET.sockfd[n],&readfds)){
+                    nrecv = recv(ENET.sockfd[n], &enetmsg,4*sizeof(uint32_t),0);
+                    if(nrecv == 0){
+                        close(ENET.sockfd[n]);
+                        if(ENET.sockfd[n] == ENET.maxfd){
+                            ENET.maxfd = ENET.sockfd[0];
+                            for(ENET.sockfd[n] = 1; ENET.sockfd[n]<N_PORTS; ENET.sockfd[n]++){
+                                if( ENET.sockfd[n] != n )
+                                    ENET.maxfd = (ENET.maxfd > ENET.sockfd[ENET.sockfd[n]]) ? ENET.maxfd : ENET.sockfd[ENET.sockfd[n]];
+                            }
+                        }
+                        ENET.sockfd[n] = 0;
+                    } else {
+                        printf("illegal recv on port %d\n, shutting down client\n",n);
+                        RUN_MAIN = 0;
+                    }
+                }
+            }
 		}
 	}
 	for(n=0;n<N_PORTS;n++)

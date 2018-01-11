@@ -20,8 +20,9 @@
 
 
 #define INIT_PORT 3400
-#define MAX_FPGAS 512
-#define MAX_PORTS 8
+#define MAX_FPGAS 64
+#define MAX_PORTS 17
+#define MAX_SOCKETS ( MAX_FPGAS * MAX_PORTS )
 #define PACKET_WIDTH 1024
 #define DATA_FIFO "data_pipe"
 #define IPCSOCK "./lithium_ipc"
@@ -49,14 +50,15 @@ unsigned long g_trigDelay;
 unsigned long g_recLen;
 unsigned long g_idx1len, g_idx2len, g_idx3len;
 unsigned long g_id1, g_id2, g_id3;
-
+unsigned long g_numBoards;
 
 struct ENETsock{ /* structure to store variables associated with ethernet connection */
     int sockfd[MAX_PORTS];                 /* file descriptor (fd) of the server socket listening for new connections */
-    int clifd[MAX_FPGAS];       /* array to store the fd's of the connected client socs */
-    int p_idx[MAX_FPGAS];       /* used to keep track of how much data has been recv'd from each soc and update array indices when saving data */
-    int board[MAX_FPGAS];       /* array to store the board number of each connected soc */
-    int portNum[MAX_FPGAS];
+    int clifd[MAX_SOCKETS];       /* array to store the fd's of the connected client socs */
+    int p_idx[MAX_SOCKETS];       /* used to keep track of how much data has been recv'd from each soc and update array indices when saving data */
+    int board[MAX_SOCKETS];       /* array to store the board number of each connected soc */
+    int portNum[MAX_SOCKETS];
+    int boardIdx[MAX_FPGAS];
     const char *serverIP;       /* IP address of the server */
     struct sockaddr_in server[MAX_PORTS];  /* socket variable */
 };
@@ -97,12 +99,13 @@ void sortENETconnections(struct ENETsock *ENET){ /* sorts ENET connections logic
 	int n,m,k,l;
 	int clifd,bn,pn,bnmax;
 	bnmax=0;
-    for(n=0;n<(MAX_FPGAS-1);n++){
+    g_numBoards = 0;
+    for(n=0;ENET->clifd[n+1]!=0;n++){
 		clifd = ENET->clifd[n];
 		bn = ENET->board[n];
 		pn = ENET->portNum[n];
 		k=n;
-		for(m=n+1;m<MAX_FPGAS;m++){
+		for(m=n+1;ENET->clifd[m]!=0;m++){
 			if( ENET->board[m] < ENET->board[n] && ENET->board[m] > 0 ) k = m;
 		}
 		
@@ -114,29 +117,14 @@ void sortENETconnections(struct ENETsock *ENET){ /* sorts ENET connections logic
 		ENET->portNum[k] = pn;
 		ENET->clifd[k] = clifd;
 		bnmax = ( bn > bnmax ) ? bn : bnmax;
+        if(ENET->portNum[n] == 0) g_numBoards++;
 	}
 	
-	for(n=0;n<bnmax;n++){
-		for(m=n*MAX_PORTS;m<((n+1)*MAX_PORTS-1);m++){
-			clifd = ENET->clifd[m];
-			bn = ENET->board[m];
-			pn = ENET->portNum[m];
-			k=m;
-			for(l=m+1;l<((n+1)*MAX_PORTS);l++){
-				k = ( ENET->portNum[l] < ENET->portNum[m] ) ? l : k;
-			}
-			
-			ENET->board[m] = ENET->board[k];
-			ENET->portNum[m] = ENET->portNum[k];
-			ENET->clifd[m] = ENET->clifd[k];
-			
-			ENET->board[k] = bn;
-			ENET->portNum[k] = pn;
-			ENET->clifd[k] = clifd;
-		}
-	}
-	//~ for(n=0;n<MAX_FPGAS;n++)
-		//~ if( ENET->board[n] >0 )printf("board %d\n",ENET->board[n]);
+    l=0;
+    for(n=0;ENET->clifd[n]!=0;n++){
+        ENET->boardIdx[ENET->board[n]] = l;
+        if(ENET->board[n+1] > ENET->board[n]) l++;
+    }
 }
 
 
@@ -153,15 +141,10 @@ void acceptENETconnection(struct ENETsock *ENET,int pn){ /* function to accept i
     int enetmsg[4] = {0};
     struct sockaddr_in client;
     clilen = sizeof(client);
-	//int a = 65536*2;
     
     for(n=0;n<MAX_FPGAS;n++){
         if(ENET->clifd[n] == 0){
             ENET->clifd[n] = accept(ENET->sockfd[pn], (struct sockaddr *)&client, &clilen);
-            
-            //setsockopt(ENET->clifd[n],SOL_SOCKET,SO_RCVBUF,&a,sizeof(int));
-            //setsockopt(ENET->clifd[n],SOL_SOCKET,SO_SNDBUF,&a,sizeof(int));
-            
             setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_NODELAY, &ONE, sizeof(int));
             recv(ENET->clifd[n], &enetmsg, 4*sizeof(int), MSG_WAITALL);
             ENET->board[n] = enetmsg[0];    /* stores the recv'd board number in the ENETsock struct */
@@ -188,7 +171,6 @@ void setupENETserver(struct ENETsock *ENET){ /* function to set up ethernet sock
     int n,pn;
     for(n=0;n<MAX_PORTS;n++){
 		pn = INIT_PORT+n;
-		printf("%d\n",n);
 		ENET->sockfd[n] = socket(AF_INET, SOCK_STREAM, 0);
 		ENET->server[n].sin_family = AF_INET;
 		ENET->server[n].sin_addr.s_addr = INADDR_ANY;
@@ -211,30 +193,31 @@ void resetGlobalVars(){ /* function to reset all global variables, global variab
 }
 
 
-void removeClient(struct ENETsock *ENET, int n){ /* function to remove closed ethernet connections from ENETsock struct */
-    printf("board %d disconnected\n",ENET->board[n]);
-    if( close(ENET->clifd[n]) == 0 ){
-        ENET->clifd[n] = 0;
-        ENET->board[n] = 0;
-        ENET->portNum[n] = 0;
-    } else {
-        ENET->clifd[n] = 0;
-        ENET->board[n] = 0;
-        ENET->portNum[n] = 0;
+void removeClients(struct ENETsock *ENET){ /* function to remove closed ethernet connections from ENETsock struct */
+    
+    int n,m;
+    for(n=0;ENET->clifd[n]!=0;n++){
+        if(ENET->clifd[n] == -1){
+            printf("board %d,%d disconnected\n",ENET->board[n],ENET->portNum[n]);
+            for(m=n+1;ENET->clifd[m-1]!=0;m++){
+                ENET->clifd[m-1] = ENET->clifd[m];
+                ENET->board[m-1] = ENET->board[m];
+                ENET->portNum[m-1] = ENET->portNum[m];
+                ENET->p_idx[m-1] = ENET->p_idx[m];
+            }
+            n--;
+        }
     }
-    while(++n<MAX_FPGAS){
-		ENET->clifd[n-1] = ENET->clifd[n];
-		ENET->board[n-1] = ENET->board[n];
-		ENET->portNum[n-1] = ENET->portNum[n];
-	}
-	ENET->clifd[(MAX_FPGAS-1)] = 0;
-	ENET->board[(MAX_FPGAS-1)] = 0;
-	ENET->portNum[(MAX_FPGAS-1)] = 0;
-	
+    g_numBoards = 0;
+    for(n=0;n<MAX_SOCKETS;n++){
+        if(ENET->portNum[n] == 0){
+            g_numBoards++;
+        }
+    }
 }
 
 
-void sendENETmsg(struct ENETsock *ENET, uint32_t *msg, int maxsocket){ /* function to send messages to socs over ethernet */
+void sendENETmsg(struct ENETsock *ENET, uint32_t *msg){ /* function to send messages to socs over ethernet */
     /* This function takes as inputs the structure containing the ENET connections, the message to be communicated to the SoCs, and the number of SoCs
        connected to the server
         
@@ -245,32 +228,34 @@ void sendENETmsg(struct ENETsock *ENET, uint32_t *msg, int maxsocket){ /* functi
     */
 
     int n;
-    for(n=0;n<maxsocket;n+=MAX_PORTS){
-        send(ENET->clifd[n],msg,4*sizeof(uint32_t),0);
-        setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
+    for(n=0;ENET->clifd[n]!=0;n++){
+        if( ENET->portNum[n] == 0 ){
+            send(ENET->clifd[n],msg,4*sizeof(uint32_t),0);
+            setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
+        }
     }
 }
 
 
-void resetFPGAdataAcqParams(struct ENETsock *ENET, unsigned long maxsocket){ /* function to reset data acquisition variables on the SoCs */
+void resetFPGAdataAcqParams(struct ENETsock *ENET){ /* function to reset data acquisition variables on the SoCs */
     /* this function makes a message variable, populates it with the default data acquisition variables, and sends it to the SoCs*/
     uint32_t fmsg[4] ={0};
 
     fmsg[0] = CASE_TOGGLE_DATA_ACQUISITION; fmsg[1] = 0;
-    sendENETmsg(ENET,fmsg,maxsocket);
+    sendENETmsg(ENET,fmsg);
     
     fmsg[0] = CASE_SET_TRIGGER_DELAY; fmsg[1] = g_trigDelay;
-    sendENETmsg(ENET,fmsg,maxsocket);
+    sendENETmsg(ENET,fmsg);
     
     fmsg[0] = CASE_SET_RECORD_LENGTH; fmsg[1] = g_recLen;
-    sendENETmsg(ENET,fmsg,maxsocket);
+    sendENETmsg(ENET,fmsg);
    
 }
 
 
 int main(int argc, char *argv[]) { printf("into main!\n");
 	
-    struct ENETsock ENET = {.sockfd={0},.clifd={0},.board={0},.p_idx={0},.portNum={0}};          /* declares and initializes ethernet socket variables */
+    struct ENETsock ENET = {.sockfd={0},.clifd={0},.board={0},.p_idx={0},.portNum={0},.boardIdx={-1}};          /* declares and initializes ethernet socket variables */
     setupENETserver(&ENET);                                             /* calls function to listen for incoming enet connections from the SoCs */
 
     struct IPCsock IPC = {.clifd=0};                                    /* declares and initializes ipc socket variables */
@@ -278,27 +263,28 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 
     struct FIFOmsg fmsg;                                                /* creates messaging variable to carry ipc messages */
     
-    int n,m,k,l,ltmp;   
+    int connectedBoards[MAX_FPGAS];    
+    int n,m,k,l;   
     int maxfd = -1;                                                     /* variable to store the highest value of a connected fd  */
 
     for(n=0;n<MAX_PORTS;n++)
-		maxfd = ( maxfd > ENET.sockfd[n] ) ? maxfd : ENET.sockfd[n];  /* sets maxfd to be equal to the higher of the two fds */
+		maxfd = ( maxfd > ENET.sockfd[n] ) ? maxfd : ENET.sockfd[n];    /* sets maxfd to be equal to the higher of the two fds */
     maxfd = ( maxfd > IPC.ipcfd ) ? maxfd : IPC.ipcfd;                  /* sets maxfd to be equal to the higher of the two fds */
 
     resetGlobalVars();                                                  /* sets all the global variables to their defualt values */
     uint32_t *data;                                                     /* array to store acquired data */
     
-    data = (uint32_t *)malloc(2*MAX_FPGAS/MAX_PORTS*g_recLen*sizeof(uint32_t));   /* initial memory allocation for 'data' */
+    data = (uint32_t *)malloc(2*MAX_FPGAS*g_recLen*sizeof(uint32_t));   /* initial memory allocation for 'data' */
     unsigned long data_idx;                                             /* index of where to write incoming data in the 'data' array */
- 
-    unsigned long maxsocket,maxipc;                                      /* number of SoCs connected over enet, number of ipc socks */
-    maxsocket = 0; maxipc = 0;                                           /* initializes the number of connected SoCs and ipc to 0 */
+
+    unsigned long maxipc;                                               /* number of SoCs connected over enet, number of ipc socks */
+    maxipc = 0;                                                         /* initializes the number of connected SoCs and ipc to 0 */
+    
+    g_numBoards = 0;
     int dataAcqGo = 0;                                                  /* flag to put SoC in state to acquire data or not */
     int nready,nrecv;                                                   /* number of fds with incoming data ready, number of bytes recv'd */
     fd_set readfds;                                                     /* array of fds to poll for incoming/readable data */
     struct timeval tv;                                                  /* timer variable used for select loop timeout */
-    struct timeval t1,t2,t3,t4,t5,t6;
-    int diff[4]={0}; int n0[3]={0};
     int runner = 1;                                                     /* flag to run the server, closes program if set to 0 */
     k=0;
     while(runner == 1){
@@ -310,11 +296,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
         /* constructs the set of fds the 'select' function should poll for incoming/readable data */
         FD_ZERO(&readfds);                                              /* emptys the set */
         for(n=0;n<MAX_PORTS;n++){
-			FD_SET(ENET.sockfd[n],&readfds);                                   /* adds the ethernet socket which listens for new incoming connections */
+			FD_SET(ENET.sockfd[n],&readfds);                            /* adds the ethernet socket which listens for new incoming connections */
 		}
-        //~ FD_SET(fifofd,&readfds);                                        /* adds the FIFO */
+        
         FD_SET(IPC.ipcfd,&readfds);                                     /* adds the ipc socket which listens for new ipc connections */
-        for(n=0;n<maxsocket;n++){                                        /* loops through all *connected* ethernet sockets to add them to the set */
+        
+        for(n=0;ENET.clifd[n]!=0;n++){                                  /* loops through all *connected* ethernet sockets to add them to the set */
             FD_SET(ENET.clifd[n],&readfds);
         }
         for(n=0;n<maxipc;n++){                                          /* loops through all *connected* ipc sockets and adds them to the set */
@@ -375,12 +362,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                              */
                             if(fmsg.msg[1] >= 0){
                                 g_trigDelay = fmsg.msg[1];
-                                sendENETmsg(&ENET,fmsg.msg,maxsocket);
+                                sendENETmsg(&ENET,fmsg.msg);
                                 printf("trigDelay set to: %lu us\n\n",g_trigDelay);
                             } else {
                                 g_trigDelay = 0;
                                 fmsg.msg[1] = 0;
-                                sendENETmsg(&ENET,fmsg.msg,maxsocket);
+                                sendENETmsg(&ENET,fmsg.msg);
                                 printf("invalid trigDelay value, defaulting to 0 us\n\n");
                             }
                             break;
@@ -396,14 +383,14 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                              */
                             if(fmsg.msg[1] > 0 && fmsg.msg[1] < MAX_RECLEN){
                                 g_recLen = fmsg.msg[1];
-                                sendENETmsg(&ENET,fmsg.msg,maxsocket);
+                                sendENETmsg(&ENET,fmsg.msg);
                                 printf("recLen set to: %lu\n\n",g_recLen);
                             } else {
                                 printf("invalid recLen, reseting global variables\n"); 
                                 resetGlobalVars();
                                 k = 0;
-                                resetFPGAdataAcqParams(&ENET,maxsocket);
-                                data = (uint32_t *)realloc(data,maxsocket/MAX_PORTS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen*sizeof(uint32_t));
+                                resetFPGAdataAcqParams(&ENET);
+                                data = (uint32_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen*sizeof(uint32_t));
                                 printf("global variables reset to defaults\n");
                             }
                             break;
@@ -438,12 +425,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             */
                             if(fmsg.msg[1] == 1){
                                 
-                                data = (uint32_t *)realloc(data,maxsocket/MAX_PORTS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen*sizeof(uint32_t));
-                                printf("data realloc'd to size [%lu, %lu, %lu, %lu, %lu]\n\n", g_idx1len,g_idx2len,g_idx3len,g_recLen,maxsocket/MAX_PORTS);
+                                data = (uint32_t *)realloc(data,g_numBoards*g_idx1len*g_idx2len*g_idx3len*2*g_recLen*sizeof(uint32_t));
+                                printf("data realloc'd to size [%lu, %lu, %lu, %lu, %lu]\n\n", g_idx1len,g_idx2len,g_idx3len,g_recLen,g_numBoards);
                             } else {
                                 free(data);
                                 uint32_t *data;
-                                data = (uint32_t *)malloc(MAX_FPGAS/MAX_PORTS*4*g_recLen*sizeof(uint32_t));
+                                data = (uint32_t *)malloc(MAX_FPGAS*4*g_recLen*sizeof(uint32_t));
                             }
                             break;
                         }
@@ -453,20 +440,21 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 notes about variables in fmsg:
                                 - msg[1] is the toggle state, '1' puts the SoC into a state to acquire data. any other value puts it into a state to
                                   NOT acquire data
-                                - msg[2] and buff are not used
-                                - msg[3] is currently (10/13) unused, but could be set to toggle the acq state of individual boards (see sendENETmsg).
-                                  May be incorporated in the future, but the cServer can't handle this currently so msg[3] is set to zero to prevent
-                                  it from trying. 
+                                - msg[2,3] and buff are not used
                             */
-                            fmsg.msg[3] = 0;
+							g_numBoards = 0;
+                            for(n=0;ENET.clifd[n]!=0;n++){
+                                if(ENET.portNum[n] == 0) g_numBoards++;
+                                printf("connected to board %d, port %d\n",ENET.board[n],ENET.portNum[n]);
+                            }
                             if(fmsg.msg[1] == 1){
                                 dataAcqGo = fmsg.msg[1];
-                                sendENETmsg(&ENET,fmsg.msg,maxsocket);
+                                sendENETmsg(&ENET,fmsg.msg);
                                 printf("data acquisition started\n\n");
                             } else {
                                 dataAcqGo = 0;
                                 fmsg.msg[1] = 0;
-                                sendENETmsg(&ENET,fmsg.msg,maxsocket);
+                                sendENETmsg(&ENET,fmsg.msg);
                                 printf("data acquisition stopped\n\n");
                             }
                             break;
@@ -501,7 +489,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                   just disabled the option. may be incorporated in the future though.
                             */
                             fmsg.msg[3] = 0;
-                            sendENETmsg(&ENET,fmsg.msg,maxsocket);
+                            sendENETmsg(&ENET,fmsg.msg);
                             printf("shutting down FPGAs\n");
                             break;
                         }
@@ -512,10 +500,10 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             */
                             resetGlobalVars();
                             k = 0;
-                            resetFPGAdataAcqParams(&ENET,maxsocket);
-                            data = (uint32_t *)realloc(data,maxsocket/MAX_PORTS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen*sizeof(uint32_t));
+                            resetFPGAdataAcqParams(&ENET);
+                            data = (uint32_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen*sizeof(uint32_t));
                             printf("global variables reset to defaults\n");
-                            printf("data reset to size [%lu, %lu, %lu, %lu, %lu]\n\n", g_idx1len,g_idx2len,g_idx3len,g_recLen,maxsocket/MAX_PORTS);
+                            printf("data reset to size [%lu, %lu, %lu, %lu, %d]\n\n", g_idx1len,g_idx2len,g_idx3len,g_recLen,MAX_FPGAS);
                             break;
                         }
 
@@ -526,7 +514,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 - buff contains the name of the file to save the data in. (the string in 'buff' is limited to 100 characters)
                             */ 
                             FILE *datafile = fopen(fmsg.buff,"wb"); 
-                            fwrite(data,sizeof(uint32_t),maxsocket/MAX_PORTS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen,datafile);
+                            fwrite(data,sizeof(uint32_t),MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen,datafile);
                             fclose(datafile);
                             printf("data saved to file %s\n\n",fmsg.buff);
                             break;                            
@@ -537,7 +525,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 notes on variables in fmgs:
                                 - msg[1], msg[2], msg[3], and buff are unused    
                             */
-							if(send(IPC.clifd,data,sizeof(uint32_t)*maxsocket/MAX_PORTS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen,0) == -1){
+							if(send(IPC.clifd,data,sizeof(uint32_t)*MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*2*g_recLen,0) == -1){
                                 perror("IPC send failed\n");
                                 exit(1);
                             }
@@ -547,7 +535,14 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 						case(CASE_GET_BOARD_COUNT):{
 							/* This function returns the number of socs connected to the cServer via ethernet to the python UI 
 								- msg[1], msg[2], msg[3]*, and buff are unused.*/
-							if(send(IPC.clifd,&maxsocket,sizeof(int),MSG_CONFIRM) == -1){
+							g_numBoards = 0;
+                            for(n=0;ENET.clifd[n]!=0;n++){
+                                if(ENET.portNum[n] == 0){
+                                    connectedBoards[g_numBoards] = ENET.board[n];
+                                    g_numBoards++;
+                                }
+                            }
+                            if(send(IPC.clifd,&g_numBoards,sizeof(int),MSG_CONFIRM) == -1){
                                 perror("IPC send failed\n");
                                 exit(1);
                             }
@@ -557,7 +552,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 						case(CASE_GET_BOARD_NUMS):{
 							/* This function returns the board numbers of the connected socs to the python UI 
 								- msg[1], msg[2], msg[3]*, and buff are unused.*/	
-							if(send(IPC.clifd,&ENET.board[0],maxsocket*sizeof(int),MSG_CONFIRM) == -1){
+							
+                            if(send(IPC.clifd,connectedBoards,g_numBoards*sizeof(int),MSG_CONFIRM) == -1){
 								perror("IPC send failed\n");
 								exit(1);
 							}
@@ -565,8 +561,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 						}
 						
 						case(CASE_QUERY_DATA):{
-							gettimeofday(&t3,NULL);
-							sendENETmsg(&ENET,fmsg.msg,maxsocket);
+							sendENETmsg(&ENET,fmsg.msg);
 							//printf("waiting for data\n\n");                
                             break;
 						}
@@ -578,11 +573,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                   shutdown the sever.
                             */
                             fmsg.msg[0]=8; fmsg.msg[3] = 0;
-                            sendENETmsg(&ENET,fmsg.msg,maxsocket);
-                            for(n=0;n<maxsocket;n++){
-                                removeClient(&ENET,n);
-                            }
-                            maxsocket = 0;
+                            sendENETmsg(&ENET,fmsg.msg);
                             runner = 0;
                             printf("shutting server down\n\n");
                             break;
@@ -595,11 +586,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                              
                             printf("invalid message, shutting down server,%d, %d, %d, %d\n",fmsg.msg[0],fmsg.msg[1],fmsg.msg[2],fmsg.msg[3]);
                             fmsg.msg[0]=8; fmsg.msg[3] = 0;
-                            sendENETmsg(&ENET,fmsg.msg,maxsocket);
-                            for(n=0;n<maxsocket;n++){
-                                removeClient(&ENET,n);
-                            }
-                            maxsocket = 0;
+                            sendENETmsg(&ENET,fmsg.msg);
                             break;
                         }
                     }
@@ -607,81 +594,68 @@ int main(int argc, char *argv[]) { printf("into main!\n");
             }
         
             /* SoC message/data handler  */
-            for(n=0;n<maxsocket;n++){ /* loops through all connected SoCs */
-                if(FD_ISSET(ENET.clifd[n], &readfds)){ 
-					
-                    /* sets the array index where the incoming data will be stored */
-                    data_idx = (ENET.board[n]-1)*g_idx1len*g_idx2len*g_idx3len*2*g_recLen;
-                    data_idx += g_id1*g_idx2len*g_idx3len*2*g_recLen;
-                    data_idx += g_id2*g_idx3len*2*g_recLen;
-                    data_idx += g_id3*2*g_recLen;
-                    data_idx += ENET.portNum[n]*2*PACKET_WIDTH;
-                    
-                    gettimeofday(&t1,NULL);
-                    if( n%MAX_PORTS == (g_recLen-1)/PACKET_WIDTH && g_recLen%PACKET_WIDTH > 0 ){
-						nrecv = recv(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],2*(g_recLen%PACKET_WIDTH)*sizeof(uint32_t),0);
-					} else {
-						nrecv = recv(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],2*PACKET_WIDTH*sizeof(uint32_t),0);
-					}
-                    
-                    gettimeofday(&t2,NULL);
-                    setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
+            l=0;
+            for(n=0;ENET.clifd[n]!=0;n++){ /* loops through all connected SoCs */
+                if(ENET.portNum[n]!=0){
+                    if(FD_ISSET(ENET.clifd[n], &readfds)){ 
+                        
+                        /* sets the array index where the incoming data will be stored */
+                        data_idx = ( ENET.boardIdx[ENET.board[n]] )*g_idx1len*g_idx2len*g_idx3len*2*g_recLen;
+                        data_idx += g_id1*g_idx2len*g_idx3len*2*g_recLen;
+                        data_idx += g_id2*g_idx3len*2*g_recLen;
+                        data_idx += g_id3*2*g_recLen;
+                        data_idx += (ENET.portNum[n]-1)*2*PACKET_WIDTH;
+                        
+                        if( (ENET.portNum[n]-1)%MAX_PORTS == (g_recLen-1)/PACKET_WIDTH && g_recLen%PACKET_WIDTH > 0 ){
+                            nrecv = recv(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],2*(g_recLen%PACKET_WIDTH)*sizeof(uint32_t),0);
+                        } else {
+                            nrecv = recv(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],2*PACKET_WIDTH*sizeof(uint32_t),0);
+                        }
+                        
+                        setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
 
-                    if (nrecv == 0){
-                        removeClient(&ENET,n);
-                        maxsocket--;
-                    } else {
-                        /* keeps track of how much data each 'read' brought in to update the array index of where to store the next set of
-                           incoming data */
-                        ENET.p_idx[n] += nrecv/sizeof(uint32_t); 
-                        diff[n] += t2.tv_usec-t1.tv_usec;
-                        diff[3] += t2.tv_usec-t1.tv_usec;
-                        n0[n] += nrecv/sizeof(uint32_t);
-                        
-						/* after each channel has read in all the data its supposed to for each pulse, p_idx is reset to 0. 'k' is a counter to keep track of how many boards have completed data transfer */
-                        if(ENET.p_idx[n] == 2*PACKET_WIDTH){
-							k++;
-							ENET.p_idx[n] = 0;
-							//~ printf("N:%d, dt: %d, nrecv:%d\n",n,diff[n],n0[n]);
-							diff[n]=0; n0[n]=0;
-                        } else if ( n%MAX_PORTS == (g_recLen-1)/PACKET_WIDTH && g_recLen%PACKET_WIDTH > 0 ){
-							if(ENET.p_idx[n] == 2*(g_recLen % PACKET_WIDTH)){
-								k++;
-								ENET.p_idx[n] = 0;
-								//~ printf("N:%d, dt: %d, nrecv:%d\n",n,diff[n],n0[n]);
-								diff[n]=0; n0[n]=0;
-							}
-						}
-                        
+                        if (nrecv == 0){
+                            close(ENET.clifd[n]);
+                            ENET.clifd[n]=-1;
+                            l=1;
+                        } else {
+                            /* keeps track of how much data each 'read' brought in to update the array index of where to store the next set of
+                               incoming data */
+                            ENET.p_idx[n] += nrecv/sizeof(uint32_t); 
+                            
+                            /* after each channel has read in all the data its supposed to for each pulse, p_idx is reset to 0. 'k' is a counter to keep track of how many boards have completed data transfer */
+                            if(ENET.p_idx[n] == 2*PACKET_WIDTH){
+                                k++;
+                                ENET.p_idx[n] = 0;
+                            } else if ( ((ENET.portNum[n]-1)%MAX_PORTS == (g_recLen-1)/PACKET_WIDTH) && (g_recLen%PACKET_WIDTH > 0 )){
+                                if(ENET.p_idx[n] == 2*(g_recLen % PACKET_WIDTH)){
+                                    k++;
+                                    ENET.p_idx[n] = 0;
+                                }
+                            }
+                            
+                        }
+                        if( k == g_numBoards*((g_recLen-1)/PACKET_WIDTH+1) ){ 
+                            /* if all data from all SoCs has been collected and transfered to the cServer, let the python UI know so it can move on
+                               with the program */
+                            if(send(IPC.clifd,&n,sizeof(int),0) == -1){
+                                perror("IPC send failed\n");
+                                exit(1);
+                            }
+                            k = 0;
+                        }
                     }
-                    if( k == (maxsocket/MAX_PORTS)*((g_recLen-1)/PACKET_WIDTH+1) ){ 
-						/* if all data from all SoCs has been collected and transfered to the cServer, let the python UI know so it can move on
-						   with the program */
-						//~ gettimeofday(&t3,NULL);
-						printf("ipc Sendddddddd\n");
-						if(send(IPC.clifd,&n,sizeof(int),0) == -1){
-							perror("IPC send failed\n");
-							exit(1);
-						}
-						gettimeofday(&t4,NULL);
-						diff[0] = t4.tv_usec-t3.tv_usec-g_recLen/20;
-						printf("round trip: query -> data return time = %d, recv time = %d\n",diff[0],diff[3]);diff[0]=0; diff[3]=0;
-						//~ setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
-						k = 0;
-					}
                 }
             }
+            if(l>0) removeClients(&ENET);
           
     
 			for(l=0;l<MAX_PORTS;l++){
 				/* Handles/accepts new ethernet connections waiting to be established with the cServer */
 				if( FD_ISSET(ENET.sockfd[l], &readfds) ){
 					acceptENETconnection(&ENET,l);
-					for(n=0;n<MAX_FPGAS;n++){
-						if(ENET.clifd[n] > 0){
-							maxsocket = n+1;
-							maxfd = (maxfd > ENET.clifd[n]) ? maxfd : ENET.clifd[n];
-						}   
+					for(n=0;ENET.clifd[n]!=0;n++){
+                        maxfd = (maxfd > ENET.clifd[n]) ? maxfd : ENET.clifd[n];
 					}
 				}
 			}
@@ -702,7 +676,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     close(IPC.ipcfd);
     for(n=0;n<MAX_PORTS;n++)
 		close(ENET.sockfd[n]);
-    for(n=0;n<maxsocket;n++)
+    for(n=0;ENET.clifd[n]!=0;n++)
         close(ENET.clifd[n]);
     printf("successfully exited!\n");
     exit(0);

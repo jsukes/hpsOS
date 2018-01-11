@@ -1,8 +1,10 @@
 
 
 struct ENETsock{ // structure to store ethernet variables
-	int sockfd[N_PORTS];
-	int portNum;
+    const char *serverIP;
+    const int boardNum;
+    int sockfd[N_PORTS];
+    int maxfd;
 	const char *server_addr;
 	struct sockaddr_in server_sockaddr;
 };
@@ -116,40 +118,39 @@ void getBoardData(int argc, char *argv[], int *boardData){ // load the boards sp
 }
 
 
-void setupENETsock(struct ENETsock *ENET, const char* serverIP, int boardNum){ // connect to the cServer through ethernet
+void setupENETsock(struct ENETsock *ENET, int portNum){ // connect to the cServer through ethernet
 	struct timeval t0,t1;
 	int diff;
-    //int a = 65536*2;
-    int pn;
     
-    for(pn=0;pn<N_PORTS;pn++){
-		ENET->server_addr = serverIP;	
-		ENET->sockfd[pn] = socket(AF_INET, SOCK_STREAM, 0);
-		ENET->server_sockaddr.sin_port = htons(INIT_PORT+pn);
-		ENET->server_sockaddr.sin_family = AF_INET;
-		ENET->server_sockaddr.sin_addr.s_addr = inet_addr(ENET->server_addr);
-		
-		gettimeofday(&t0,NULL);
-		
-		if(connect(ENET->sockfd[pn], (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){		
-			while(connect(ENET->sockfd[pn], (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){
-				gettimeofday(&t1,NULL);
-				diff = (t1.tv_sec-t0.tv_sec);
-				if(diff>(600)){
-					printf("NO CONNECT!!!!\n");
-					break;
-				}	
-			}
-		}
-		
-		//setsockopt(ENET->sockfd[pn],SOL_SOCKET,SO_SNDBUF,&a,sizeof(int));	
-	    setsockopt(ENET->sockfd[pn],IPPROTO_TCP,TCP_NODELAY,&ONE,sizeof(int));
-	    int tmpmsg[4] = {0};
-		tmpmsg[0] = boardNum;
-		tmpmsg[1] = pn;
-		send(ENET->sockfd[pn], &tmpmsg, 4*sizeof(int), 0);
-	    setsockopt(ENET->sockfd[pn],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
-	}
+    ENET->server_addr = ENET->serverIP;	
+    ENET->sockfd[portNum] = socket(AF_INET, SOCK_STREAM, 0);
+    ENET->server_sockaddr.sin_port = htons(INIT_PORT+portNum);
+    ENET->server_sockaddr.sin_family = AF_INET;
+    ENET->server_sockaddr.sin_addr.s_addr = inet_addr(ENET->server_addr);
+    
+    gettimeofday(&t0,NULL);
+    
+    if(connect(ENET->sockfd[portNum], (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){		
+        while(connect(ENET->sockfd[portNum], (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){
+            gettimeofday(&t1,NULL);
+            diff = (t1.tv_sec-t0.tv_sec);
+            if(diff>(600)){
+                printf("NO CONNECT!!!!\n");
+                break;
+            }	
+        }
+    }
+    
+    setsockopt(ENET->sockfd[portNum],IPPROTO_TCP,TCP_NODELAY,&ONE,sizeof(int));
+    int tmpmsg[4] = {0};
+    tmpmsg[0] = ENET->boardNum;
+    tmpmsg[1] = portNum;
+    send(ENET->sockfd[portNum], &tmpmsg, 4*sizeof(int), 0);
+    setsockopt(ENET->sockfd[portNum],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+    ENET->maxfd = ENET->sockfd[0];
+    for(tmpmsg[0]=0;ENET->sockfd[tmpmsg[0]]!=0;tmpmsg[0]++)
+        ENET->maxfd = (ENET->maxfd > ENET->sockfd[tmpmsg[0]]) ? ENET->maxfd : ENET->sockfd[tmpmsg[0]];
+
 }
 
 
@@ -158,8 +159,7 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 	uint32_t *dtmp;//[2*MAX_DATA_LEN];
 
 	int tmp = 0;
-	int n,ps;
-	ps = (g_recLen-1)/PACKET_WIDTH+1;
+	int n,activePorts;
 	
 				
 	switch(pipemsg[0]){
@@ -175,14 +175,24 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 			if(pipemsg[1]>0 && pipemsg[1]<MAX_DATA_LEN){
 				DREF(FPGA->recLen) = pipemsg[1];
 				g_recLen = DREF(FPGA->recLen);
-				ps = (g_recLen-1)/PACKET_WIDTH+1;
+				activePorts = (g_recLen-1)/PACKET_WIDTH+1;
 				printf("recLen set to %zu\n",DREF(FPGA->recLen));
 			} else {
 				DREF(FPGA->recLen) = 2048;
 				g_recLen = DREF(FPGA->recLen);
-				ps = (g_recLen-1)/PACKET_WIDTH+1;
+				activePorts = (g_recLen-1)/PACKET_WIDTH+1;
 				printf("invalid recLen, defaulting to 2048\n");
 			}
+            ENET->maxfd = ENET->sockfd[0];
+            for(n=1;n<N_PORTS;n++){
+                if(n<=activePorts && ENET->sockfd[n] == 0){
+                    setupENETsock(ENET,n);
+                } else if (n>activePorts && ENET->sockfd[n]!=0 ){
+                    close(ENET->sockfd[n]);
+                    ENET->sockfd[n] = 0;
+                }
+                ENET->maxfd = (ENET->maxfd > ENET->sockfd[n]) ? ENET->maxfd : ENET->sockfd[n];
+            }
 			break;
 		}
 
@@ -211,15 +221,11 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 			
 			if(tmp<1000){
 				dtmp = DREFP(FPGA->onchip1);
-				for(n=0;n<ps;n++){
-					if(n!=(ps-1)){
-						send(ENET->sockfd[n],&dtmp[2*n*PACKET_WIDTH],2*PACKET_WIDTH*sizeof(uint32_t),0);
+				for(n=1;ENET->sockfd[n]!=0;n++){
+					if( ( n == (g_recLen-1)/PACKET_WIDTH+1 ) && ( g_recLen%PACKET_WIDTH > 0 ) ){
+						send(ENET->sockfd[n],&dtmp[2*(n-1)*PACKET_WIDTH],2*(g_recLen%PACKET_WIDTH)*sizeof(uint32_t),0);
 					} else {
-						if(g_recLen%PACKET_WIDTH > 0){
-							send(ENET->sockfd[n],&dtmp[2*n*PACKET_WIDTH],2*(g_recLen%PACKET_WIDTH)*sizeof(uint32_t),0);
-						} else {
-							send(ENET->sockfd[n],&dtmp[2*n*PACKET_WIDTH],2*PACKET_WIDTH*sizeof(uint32_t),0);
-						}
+                        send(ENET->sockfd[n],&dtmp[2*(n-1)*PACKET_WIDTH],2*PACKET_WIDTH*sizeof(uint32_t),0);
 					}
 					setsockopt(ENET->sockfd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
 				}
@@ -237,6 +243,9 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 		default:{
 			printf("default case, shutting down\n");
 			FPGAclose(FPGA);
+            for(n=0;n<N_PORTS;n++){
+                if(ENET->sockfd[n]!=0) close(ENET->sockfd[n]);
+            }
 			break;
 		}
 	}

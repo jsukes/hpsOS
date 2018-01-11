@@ -260,6 +260,7 @@ class dataServer():
 		if to != None:
 			nready = select.select([self.ipcsock], [], [], to)
 			if nready[0]:
+				print 'yoyoyo'
 				return self.ipcsock.recv(4,socket.MSG_WAITALL)
 			else:
 				print 'ipcWait timed out'
@@ -283,11 +284,11 @@ class dataServer():
 		if self.boardCount > 0:
 			msg = struct.pack(self.cmsg,15,0,0,0,"")
 			self.ipcsock.send(msg)
-			self.boardNums = np.array(struct.Struct('{}{}{}'.format('=',self.boardCount,'I')).unpack(self.ipcsock.recv(self.boardCount*4,socket.MSG_WAITALL)))
+			self.boardNums = np.array(struct.Struct('{}{}{}'.format('=',self.boardCount,'i')).unpack(self.ipcsock.recv(self.boardCount*4,socket.MSG_WAITALL)))
 		else:
 			self.boardNums = 0
 			print 'no boards are connected to the cServer'
-			
+		
 		return self.boardNums
 	
 	def queryData(self):
