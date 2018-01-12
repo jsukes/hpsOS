@@ -60,13 +60,14 @@
 // case flags for switch statement in FPGA_dataAcqController
 #define CASE_TRIGDELAY 0
 #define CASE_RECLEN 1
+#define CASE_SET_PACKETSIZE 2
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
 #define CASE_QUERY_DATA 16
 #define CASE_KILLPROGRAM 17
 
 #define MAX_DATA_PORTS 64
-#define PACKET_WIDTH 1024
+#define PACKET_WIDTH 512
 
 int RUN_MAIN = 1;
 const int ONE = 1;
@@ -74,13 +75,15 @@ const int ZERO = 0;
 
 uint32_t g_recLen;
 int g_nDataPorts;
+int g_packetsize;
 // load user defined functions 
 #include "client_funcs.h"
 
 
 int main(int argc, char *argv[]) { printf("into main!\n");
 	g_recLen = 2048;
-	g_nDataPorts = 2;
+    g_packetsize = 512;
+	g_nDataPorts = g_recLen/g_packetsize;
 
 	struct FPGAvars FPGA;
 	FPGA_init(&FPGA);
@@ -94,8 +97,11 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	// create ethernet socket to communicate with server and establish connection
 	struct ENETsock ENET = {.serverIP=argv[1],.boardNum=boardData[0]};
 	setupCOMMsock(&ENET);
-    setupDATAsock(&ENET,1);
-    setupDATAsock(&ENET,2);
+    for(enetmsg[0]=1;enetmsg[0]<=g_nDataPorts;enetmsg[0]++){
+        setupDATAsock(&ENET,enetmsg[0]);
+    }
+    enetmsg[0] = 0;
+    
     
 
 	// declare and initialize variables for the select loop
@@ -150,8 +156,10 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         }
                         ENET.sockfd[n] = 0;
                         g_nDataPorts--;
+                    } else if (nrecv == -1){
+                        perror("recv being dumb\n");
                     } else {
-                        printf("illegal recv on port %d\n, shutting down client\n",n);
+                        printf("illegal recv (n = %d) on port %d, msg = [%lu, %lu, %lu, %lu]\n, shutting down client\n",nrecv,n,enetmsg[0],enetmsg[1],enetmsg[2],enetmsg[3]);
                         RUN_MAIN = 0;
                     }
                 }

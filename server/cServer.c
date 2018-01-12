@@ -23,13 +23,14 @@
 #define MAX_FPGAS 64
 #define MAX_PORTS 65
 #define MAX_SOCKETS ( MAX_FPGAS * MAX_PORTS )
-#define PACKET_WIDTH 1024
+//#define PACKET_WIDTH 512
 #define DATA_FIFO "data_pipe"
 #define IPCSOCK "./lithium_ipc"
 #define MAX_RECLEN 8192
 
 #define CASE_SET_TRIGGER_DELAY 0
 #define CASE_SET_RECORD_LENGTH 1
+#define CASE_SET_PACKETSIZE 2
 #define CASE_SET_CSERVER_DATA_ARRAY_SIZE 4
 #define CASE_ALLOCATE_CSERVER_DATA_ARRAY_MEM 5
 #define CASE_TOGGLE_DATA_ACQUISITION 6
@@ -48,6 +49,7 @@ const int ZERO = 0;  /* need to have a variable that can be pointed to that alwa
 /* global variables to keep track of runtime things, all global variables are prepended with 'g_'*/
 unsigned long g_trigDelay;
 unsigned long g_recLen;
+unsigned long g_packetsize;
 unsigned long g_idx1len, g_idx2len, g_idx3len;
 unsigned long g_id1, g_id2, g_id3;
 unsigned long g_numBoards;
@@ -142,7 +144,7 @@ void acceptENETconnection(struct ENETsock *ENET,int pn){ /* function to accept i
     struct sockaddr_in client;
     clilen = sizeof(client);
     
-    for(n=0;n<MAX_FPGAS;n++){
+    for(n=0;n<MAX_SOCKETS;n++){
         if(ENET->clifd[n] == 0){
             ENET->clifd[n] = accept(ENET->sockfd[pn], (struct sockaddr *)&client, &clilen);
             setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_NODELAY, &ONE, sizeof(int));
@@ -187,7 +189,7 @@ void setupENETserver(struct ENETsock *ENET){ /* function to set up ethernet sock
 
 
 void resetGlobalVars(){ /* function to reset all global variables, global variables are prepended with 'g_' */
-    g_recLen = 2048; g_trigDelay = 0;
+    g_recLen = 2048; g_trigDelay = 0; g_packetsize = 512;
     g_idx1len = 1; g_idx2len = 1; g_idx3len = 1;
     g_id1 = 0; g_id2 = 0; g_id3 = 0;
 }
@@ -296,7 +298,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 
         /* constructs the set of fds the 'select' function should poll for incoming/readable data */
         FD_ZERO(&readfds);                                              /* emptys the set */
-        for(n=0;n<((g_recLen-1)/PACKET_WIDTH+2);n++){
+        for(n=0;n<((g_recLen-1)/g_packetsize+2);n++){
 			FD_SET(ENET.sockfd[n],&readfds);                            /* adds the ethernet socket which listens for new incoming connections */
 		}
         
@@ -386,8 +388,27 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 g_recLen = fmsg.msg[1];
                                 sendENETmsg(&ENET,fmsg.msg);
                                 printf("recLen set to: %lu\n\n",g_recLen);
+                                if(g_packetsize>g_recLen){
+                                    g_packetsize = g_recLen;
+                                }
                             } else {
                                 printf("invalid recLen, reseting global variables\n"); 
+                                resetGlobalVars();
+                                k = 0;
+                                resetFPGAdataAcqParams(&ENET);
+                                data = (uint8_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t));
+                                printf("global variables reset to defaults\n");
+                            }
+                            break;
+                        }
+
+                        case(CASE_SET_PACKETSIZE):{
+                            if(fmsg.msg[1] > 0 && fmsg.msg[1] < g_recLen && fmsg.msg[1] >= MAX_RECLEN/(MAX_PORTS-1)){
+                                g_packetsize = fmsg.msg[1];
+                                sendENETmsg(&ENET,fmsg.msg);
+                                printf("packetsize set to: %lu\n\n",g_packetsize);
+                            } else {
+                                printf("invalid packetsize, reseting global variables\n"); 
                                 resetGlobalVars();
                                 k = 0;
                                 resetFPGAdataAcqParams(&ENET);
@@ -601,7 +622,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
         
             /* SoC message/data handler  */
             l=0;
-            for(n=0;n<(g_numBoards*((g_recLen-1)/PACKET_WIDTH+2));n++){ /* loops through all connected SoCs */
+            for(n=0;ENET.clifd[n]!=0;n++){ /* loops through all connected SoCs */
                 if(ENET.portNum[n]!=0){
                     if(FD_ISSET(ENET.clifd[n], &readfds)){ 
                         
@@ -610,43 +631,32 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         data_idx += g_id1*g_idx2len*g_idx3len*8*g_recLen;
                         data_idx += g_id2*g_idx3len*8*g_recLen;
                         data_idx += g_id3*8*g_recLen;
-                        data_idx += (ENET.portNum[n]-1)*8*PACKET_WIDTH;
+                        data_idx += (ENET.portNum[n]-1)*8*g_packetsize;
                         //printf("data_idx = %d / %d\n",data_idx,g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t)*g_numBoards);
-                        if( (ENET.portNum[n]-1)%MAX_PORTS == (g_recLen-1)/PACKET_WIDTH && g_recLen%PACKET_WIDTH > 0 ){
-                            nrecv = recv(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],(8*g_recLen%PACKET_WIDTH)*sizeof(uint8_t),0);
-                            printf("board %d, port %d, recv %d / %d\n",ENET.board[n],ENET.portNum[n],nrecv,(g_recLen%PACKET_WIDTH)*sizeof(uint64_t));
+                        if( (ENET.portNum[n]-1)%MAX_PORTS == (g_recLen-1)/g_packetsize && g_recLen%g_packetsize > 0 ){
+                            nrecv = recv(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],(8*(g_recLen%g_packetsize))*sizeof(uint8_t),0);
+                            //printf("board %d, port %d, recv %d / %d\n",ENET.board[n],ENET.portNum[n],nrecv,(g_recLen%PACKET_WIDTH)*sizeof(uint64_t));
                         } else {
-                            nrecv = recv(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],8*PACKET_WIDTH*sizeof(uint8_t),0);
-                            printf("board %d, port %d, recv %d / %d\n",ENET.board[n],ENET.portNum[n],nrecv,PACKET_WIDTH*sizeof(uint64_t));
+                            nrecv = recv(ENET.clifd[n],&data[data_idx+ENET.p_idx[n]],8*g_packetsize*sizeof(uint8_t),0);
+                            //printf("board %d, port %d, recv %d / %d\n",ENET.board[n],ENET.portNum[n],nrecv,PACKET_WIDTH*sizeof(uint64_t));
                         }
                         if(nrecv == -1) perror("recv");                        
                         setsockopt(ENET.clifd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
 
                         if (nrecv == 0){
                             close(ENET.clifd[n]);
+                            //printf("my name is mud\n");
                             ENET.clifd[n]=-1;
                             l=1;
                         } else {
+                            //printf("nrecv: %d [%d, %d, %d] \n",nrecv,ENET.clifd[n],ENET.board[n],ENET.portNum[n]);
                             recvCount += nrecv;
-                            /* keeps track of how much data each 'read' brought in to update the array index of where to store the next set of
-                               incoming data */
                             ENET.p_idx[n] += nrecv; 
                             
-                            /* after each channel has read in all the data its supposed to for each pulse, p_idx is reset to 0. 'k' is a counter to keep track of how many boards have completed data transfer */
-                            //if(ENET.p_idx[n] == 8*PACKET_WIDTH){
-                                //k++;
-                                //ENET.p_idx[n] = 0;
-                            //} else if ( ((ENET.portNum[n]-1)%MAX_PORTS == (g_recLen-1)/PACKET_WIDTH) && (g_recLen%PACKET_WIDTH > 0 )){
-                                //if(ENET.p_idx[n] == 8*(g_recLen % PACKET_WIDTH)){
-                                    //k++;
-                                    //ENET.p_idx[n] = 0;
-                                //}
-                            //}
                             
                         }
-                        //printf("k = %d / %d\n",k, g_numBoards*((g_recLen-1)/PACKET_WIDTH+1));
-                        //if( k == g_numBoards*((g_recLen-1)/PACKET_WIDTH+1) ){
-                        if( recvCount == g_recLen*sizeof(uint64_t) ){
+                        //printf("recvCount %d / %d\n", recvCount, g_numBoards*g_recLen*sizeof(uint64_t));
+                        if( recvCount == g_recLen*sizeof(uint64_t)*g_numBoards ){
                             /* if all data from all SoCs has been collected and transfered to the cServer, let the python UI know so it can move on
                                with the program */
                             if(send(IPC.clifd,&n,sizeof(int),0) == -1){
@@ -657,9 +667,19 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             for(k=0;ENET.clifd[k]!=0;k++){
                                 ENET.p_idx[k] = 0;
                             }
+                            recvCount = 0;
+                        }
+                    }
+                } else {
+                    if(FD_ISSET(ENET.clifd[n],&readfds)){
+                        if(recv(ENET.clifd[n],&data_idx,sizeof(int),0) == 0){
+                            close(ENET.clifd[n]);
+                            ENET.clifd[n] = -1;
+                            l=1;
                         }
                     }
                 }
+            
             }
             if(l>0) removeClients(&ENET);
           

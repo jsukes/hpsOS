@@ -180,7 +180,20 @@ class dataServer():
 		msg = struct.pack(self.cmsg,1,self.recLen,0,0,"")
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
-		
+	
+	def setPacketsize(self,ps):
+		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
+		# the acquisition time window = [rl/20] us
+		if (ps > 0) and (ps >= REC_LEN_MAX/64):
+			self.packetsize = int(ps)
+		else:
+			print 'Invalid Packet Size Length.'
+			self.packetsize = 512
+			
+		msg = struct.pack(self.cmsg,2,self.packetsize,0,0,"")
+		self.ipcsock.send(msg)
+		time.sleep(0.05)
+			
 	def setDataArraySize(self,l1,l2,l3):
 		# used to define the amount of data that will be collected during the experiment. takes integer values 'l1','l2', and 'l3' as input, unitless. memory must be allocated in the cServer before data acquisition begins. data is stored in a 5D array of size [l1,l2,l3,2*recLen,(number of receiving boards)], these values give the size of the first 3 dimensions of the data array in the cServer. 
 		if ( l1 >= 0 ) and ( l2 >= 0 ) and ( l3 >= 0 ):
@@ -330,6 +343,7 @@ class dataServer():
 		self.dataAcqMode = 0
 		self.timeOut = 1e3
 		self.recLen = 2048
+		self.packetsize = 512
 		self.id1,self.id2,self.id3 = 0,0,0
 		self.l1, self.l2, self.l3 = 1,1,1
 		self.boardCount = 0
