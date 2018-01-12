@@ -260,7 +260,7 @@ class dataServer():
 		if to != None:
 			nready = select.select([self.ipcsock], [], [], to)
 			if nready[0]:
-				print 'yoyoyo'
+				#~ print 'yoyoyo'
 				return self.ipcsock.recv(4,socket.MSG_WAITALL)
 			else:
 				print 'ipcWait timed out'
