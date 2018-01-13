@@ -196,7 +196,7 @@ void setupDATAsock(struct ENETsock *ENET, int portNum){ // connect to the cServe
 
 void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENETsock *ENET){ // process that talks to the FPGA and transmits data to the SoCs
 
-	uint8_t *dtmp;//[2*MAX_DATA_LEN];
+	uint8_t *dtmp;
 
 	int tmp = 0;
 	int n;
@@ -212,40 +212,35 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 
 		case(CASE_RECLEN):{ // change record length
 			DREF(FPGA->transReady) = 0;
-			if(pipemsg[1]>0 && pipemsg[1]<MAX_DATA_LEN){
-				DREF(FPGA->recLen) = pipemsg[1];
-				g_recLen = DREF(FPGA->recLen);
+			if(pipemsg[1]>=MIN_PACKETSIZE && pipemsg[1]<=MAX_RECLEN){
+				DREF(FPGA->recLen) = ( pipemsg[1] == MAX_RECLEN ) ? pipemsg[1]-1 : pipemsg[1];
+				g_recLen = pipemsg[1];
 				g_nDataPorts = (g_recLen-1)/g_packetsize+1;
 				printf("recLen set to %zu\n",DREF(FPGA->recLen));
 			} else {
 				DREF(FPGA->recLen) = 2048;
 				g_recLen = DREF(FPGA->recLen);
+                g_packetsize = 512;
 				g_nDataPorts = (g_recLen-1)/g_packetsize+1;
 				printf("invalid recLen, defaulting to 2048\n");
 			}
             for(n=0;n<MAX_DATA_PORTS;n++){
                 if(n<g_nDataPorts && ENET->sockfd[n] == 0){
                     setupDATAsock(ENET,n+1);
+                    g_updateFDSet = 1;
                 } else if (n>=g_nDataPorts && ENET->sockfd[n]!=0 ){
                     close(ENET->sockfd[n]);
                     ENET->sockfd[n] = 0;
+                    g_updateFDSet = 1;
                 }
-            }
-            ENET->maxfd = ENET->commfd;
-            for(n=0;ENET->sockfd[n]!=0;n++){ 
-                ENET->maxfd = (ENET->maxfd > ENET->sockfd[n]) ? ENET->maxfd : ENET->sockfd[n];
             }
 			break;
 		}
 
         case(CASE_SET_PACKETSIZE):{
 			DREF(FPGA->transReady) = 0;
-			if(pipemsg[1]>0 && pipemsg[1] >= MAX_DATA_LEN/MAX_DATA_PORTS ){
-                if(pipemsg[1]<=g_recLen){
-				    g_packetsize = pipemsg[1];
-                } else {
-                    g_packetsize = g_recLen;
-                }
+			if( pipemsg[1] >= MIN_PACKETSIZE && pipemsg[1] <= g_recLen ){
+                g_packetsize = pipemsg[1];
 				g_nDataPorts = (g_recLen-1)/g_packetsize+1;
 				printf("packetsize set to %u\n",g_packetsize);
 			} else {
@@ -255,16 +250,13 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
             for(n=0;n<MAX_DATA_PORTS;n++){
                 if(n<g_nDataPorts && ENET->sockfd[n] == 0){
                     setupDATAsock(ENET,n+1);
+                    g_updateFDSet = 1;
                 } else if (n>=g_nDataPorts && ENET->sockfd[n]!=0 ){
                     close(ENET->sockfd[n]);
                     ENET->sockfd[n] = 0;
+                    g_updateFDSet = 1;
                 }
             }
-            ENET->maxfd = ENET->commfd;
-            for(n=0;ENET->sockfd[n]!=0;n++){ 
-                ENET->maxfd = (ENET->maxfd > ENET->sockfd[n]) ? ENET->maxfd : ENET->sockfd[n];
-            }
-            
             break;
         }
 
@@ -287,21 +279,20 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 		}
 
 		case(CASE_QUERY_DATA):{
-			while( DREF(FPGA->transReady) == 0 && ++tmp<1000 ){
+			while( !DREF(FPGA->transReady) && ++tmp<1000 ){
 				usleep(10);
 			}
 			
-			if(tmp<1000){
+			if( DREF(FPGA->transReady) ){
 				dtmp = DREFP(FPGA->onchip1);
                 nsent = 0;
 				for(n=0;ENET->sockfd[n]!=0;n++){
-					if( ( n == (g_recLen-1)/g_packetsize ) && ( g_recLen%g_packetsize > 0 ) ){
-						nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],(g_recLen%g_packetsize)*sizeof(uint64_t),0);
-                        //printf("nsent = %d / %d\n",nsent,(g_recLen%PACKET_WIDTH)*sizeof(uint64_t));
+					if( ( n == (g_nDataPorts-1) ) && ( g_recLen%g_packetsize > 0 ) ){
+						nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],(g_recLen%g_packetsize)*8*sizeof(uint8_t),0);
 					} else {
-                        nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],g_packetsize*sizeof(uint64_t),0);
-                        //printf("nsent = %d / %d\n",nsent,PACKET_WIDTH*sizeof(uint64_t));
+                        nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],g_packetsize*8*sizeof(uint8_t),0);
 					}
+                    if ( nsent == -1 ) perror("error sending data:");
 					setsockopt(ENET->sockfd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
 				}
 			}
@@ -319,8 +310,8 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 			printf("default case, shutting down\n");
 			FPGAclose(FPGA);
             close(ENET->commfd);
-            for(n=0;n<MAX_DATA_PORTS;n++){
-                if(ENET->sockfd[n]!=0) close(ENET->sockfd[n]);
+            for(n=0;ENET->sockfd[n]!=0;n++){
+                close(ENET->sockfd[n]);
             }
 			break;
 		}

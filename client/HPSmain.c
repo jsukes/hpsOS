@@ -54,7 +54,6 @@
 
 #define DREF(X) ( *(uint32_t *) X )
 #define DREFP(X) ( (uint8_t *) X )
-#define MAX_DATA_LEN 8192
 #define INIT_PORT 3400
 
 // case flags for switch statement in FPGA_dataAcqController
@@ -68,6 +67,8 @@
 
 #define MAX_DATA_PORTS 64
 #define PACKET_WIDTH 512
+#define MAX_RECLEN 8192
+#define MIN_PACKETSIZE ( MAX_RECLEN/MAX_DATA_PORTS ) 
 
 int RUN_MAIN = 1;
 const int ONE = 1;
@@ -76,6 +77,7 @@ const int ZERO = 0;
 uint32_t g_recLen;
 int g_nDataPorts;
 int g_packetsize;
+int g_updateFDSet;
 // load user defined functions 
 #include "client_funcs.h"
 
@@ -83,7 +85,7 @@ int g_packetsize;
 int main(int argc, char *argv[]) { printf("into main!\n");
 	g_recLen = 2048;
     g_packetsize = 512;
-	g_nDataPorts = g_recLen/g_packetsize;
+	g_nDataPorts = (g_recLen-1)/g_packetsize+1;
 
 	struct FPGAvars FPGA;
 	FPGA_init(&FPGA);
@@ -102,28 +104,38 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     }
     enetmsg[0] = 0;
     
-    
-
 	// declare and initialize variables for the select loop
 	int n;
-	
 	int nready,nrecv;
-	fd_set readfds;
+	fd_set masterfds;
+    fd_set readfds;
 	
 	struct timeval tv;
 	
+    g_updateFDSet = 1;
 	while(RUN_MAIN == 1){
 	    tv.tv_sec = 0;
 	    tv.tv_usec = 10000;
-		FD_ZERO(&readfds);
-        FD_SET(ENET.commfd,&readfds);
-        for(n=0;n<g_nDataPorts;n++){
-            if(ENET.sockfd[n]!=0){
-		        FD_SET(ENET.sockfd[n],&readfds);
-            }
-		}
+        if(g_updateFDSet){
+		    FD_ZERO(&readfds);
+            FD_ZERO(&masterfds);
+            FD_SET(ENET.commfd,&masterfds);
+            ENET.maxfd = ENET.commfd;
+            g_nDataPorts = 0;
+            for(n=0;n<MAX_DATA_PORTS;n++){
+                if( ENET.sockfd[n]!=0 ){
+                    FD_SET(ENET.sockfd[n],&masterfds);
+                    ENET.maxfd = (ENET.maxfd>ENET.sockfd[n]) ? ENET.maxfd : ENET.sockfd[n];
+                    g_nDataPorts++;
+                }
+		    }
+            g_updateFDSet = 0;
+            readfds = masterfds;
+        } else {
+            readfds = masterfds;
+        }
 
-		nready = select(ENET.maxfd+1, &readfds, (fd_set *) 0, (fd_set *) 0, &tv);
+		nready = select(ENET.maxfd+1, &readfds, NULL, NULL, &tv);
 		
 		if( nready > 0 ){
 			if( FD_ISSET( ENET.commfd, &readfds ) ){ // incoming message from cServer
@@ -143,23 +155,17 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 			}
 
             for(n=0;n<MAX_DATA_PORTS;n++){
-                if(ENET.sockfd[n]!=0 && FD_ISSET(ENET.sockfd[n],&readfds)){
+                if( ENET.sockfd[n]!=0 && FD_ISSET(ENET.sockfd[n],&readfds) ){
                     nrecv = recv(ENET.sockfd[n], &enetmsg,4*sizeof(uint32_t),0);
                     if(nrecv == 0){
                         close(ENET.sockfd[n]);
-                        if(ENET.sockfd[n] == ENET.maxfd){
-                            ENET.maxfd = ENET.commfd;
-                            for(ENET.sockfd[n] = 0; ENET.sockfd[n]<MAX_DATA_PORTS; ENET.sockfd[n]++){
-                                if( ENET.sockfd[n] != n )
-                                    ENET.maxfd = (ENET.maxfd > ENET.sockfd[ENET.sockfd[n]]) ? ENET.maxfd : ENET.sockfd[ENET.sockfd[n]];
-                            }
-                        }
+                        FD_CLR(ENET.sockfd[n],&masterfds);
+                        if(ENET.sockfd[n] == ENET.maxfd) g_updateFDSet = 1;
                         ENET.sockfd[n] = 0;
-                        g_nDataPorts--;
                     } else if (nrecv == -1){
                         perror("recv being dumb\n");
                     } else {
-                        printf("illegal recv (n = %d) on port %d, msg = [%lu, %lu, %lu, %lu]\n, shutting down client\n",nrecv,n,enetmsg[0],enetmsg[1],enetmsg[2],enetmsg[3]);
+                        printf("illegal recv (n = %d) on port %d, msg = [%lu, %lu, %lu, %lu]\n, shutting down client\n",nrecv,n,(unsigned long)enetmsg[0],(unsigned long)enetmsg[1],(unsigned long)enetmsg[2],(unsigned long)enetmsg[3]);
                         RUN_MAIN = 0;
                     }
                 }
