@@ -50,8 +50,8 @@ unsigned long g_trigDelay;
 unsigned long g_recLen, g_packetsize;
 unsigned long g_idx1len, g_idx2len, g_idx3len;
 unsigned long g_id1, g_id2, g_id3;
-unsigned long g_numBoards, g_portMax;
-unsigned long g_connectedBoards[MAX_FPGAS];
+uint32_t g_numBoards, g_portMax;
+uint32_t g_connectedBoards[MAX_FPGAS];
 
 struct ENETsock{ /* structure to store variables associated with ethernet connection */
     int sockfd[MAX_PORTS];                 /* file descriptor (fd) of the server socket listening for new connections */
@@ -278,7 +278,6 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 
     struct FIFOmsg fmsg;                                                /* creates messaging variable to carry ipc messages */
     
-    int connectedBoards[MAX_FPGAS];    
     int n,m,k,l;   
     int maxfd,maxipc,updateFDSet;                                       /* variable to store the highest value of a connected fd  */
 
@@ -312,6 +311,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
         
         if(updateFDSet){    /* constructs the set of fds the 'select' function should poll for incoming/readable data */
             maxfd = 0;
+            sortENETconnections(&ENET);
             FD_ZERO(&masterfds);
             FD_ZERO(&readfds);                                              /* emptys the set */
             for(n=0;n<((g_recLen-1)/g_packetsize+2);n++){
@@ -429,6 +429,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 data = (uint8_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t));
                                 printf("global variables reset to defaults\n");
                             }
+                            updateFDSet = 1;
                             break;
                         }
 
@@ -443,6 +444,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 fmsg.msg[1] = g_recLen;
                                 sendENETmsg(&ENET,fmsg.msg);
                             }
+                            updateFDSet = 1;
                             break;
                         }
 
@@ -475,7 +477,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             */
                             if(fmsg.msg[1] == 1){
                                 data = (uint8_t *)realloc(data,g_numBoards*g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t));
-                                printf("data realloc'd to size [%lu, %lu, %lu, %lu, %lu], %lu\n\n", g_idx1len,g_idx2len,g_idx3len,g_recLen,g_numBoards,g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t)*g_numBoards);
+                                printf("data realloc'd to size [%lu, %lu, %lu, %lu, %u], %lu\n\n", g_idx1len,g_idx2len,g_idx3len,g_recLen,g_numBoards,g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t)*g_numBoards);
                             } else {
                                 free(data);
                                 uint8_t *data;
@@ -502,6 +504,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 sendENETmsg(&ENET,fmsg.msg);
                                 printf("data acquisition stopped\n\n");
                             }
+                            updateFDSet = 1;
                             break;
                         }
 
@@ -548,6 +551,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             data = (uint8_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t));
                             printf("global variables reset to defaults\n");
                             printf("data reset to size [%lu, %lu, %lu, %lu, %d]\n\n", g_idx1len,g_idx2len,g_idx3len,g_recLen,MAX_FPGAS);
+                            updateFDSet = 1;
                             break;
                         }
 
@@ -579,7 +583,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 						case(CASE_GET_BOARD_COUNT):{
 							/* This function returns the number of socs connected to the cServer via ethernet to the python UI 
 								- msg[1], msg[2], msg[3]*, and buff are unused.*/
-                            if(send(IPC.clifd,&g_numBoards,sizeof(unsigned long),MSG_CONFIRM) == -1){
+                            if(send(IPC.clifd,&g_numBoards,sizeof(uint32_t),MSG_CONFIRM) == -1){
                                 perror("IPC send failed\n");
                                 exit(1);
                             }
@@ -589,8 +593,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 						case(CASE_GET_BOARD_NUMS):{
 							/* This function returns the board numbers of the connected socs to the python UI 
 								- msg[1], msg[2], msg[3]*, and buff are unused.*/	
-							
-                            if(send(IPC.clifd,g_connectedBoards,g_numBoards*sizeof(unsigned long),MSG_CONFIRM) == -1){
+                            if(send(IPC.clifd,g_connectedBoards,g_numBoards*sizeof(uint32_t),MSG_CONFIRM) == -1){
 								perror("IPC send failed\n");
 								exit(1);
 							}
@@ -694,16 +697,16 @@ int main(int argc, char *argv[]) { printf("into main!\n");
             /* if any sockets had an error or disconnected remove them from the list of polled sockets */
             if(l>0){
                 removeClients(&ENET);
-                //updateFDSet = 1;
+                updateFDSet = 1;
             }
     
 			/* Handles/accepts new ethernet connections waiting to be established with the cServer */
 			for(l=0;l<MAX_PORTS;l++){
 				if( FD_ISSET(ENET.sockfd[l], &readfds) ){
 					acceptENETconnection(&ENET,l);
-					for(n=0;ENET.clifd[n]!=0;n++){
-                        maxfd = (maxfd > ENET.clifd[n]) ? maxfd : ENET.clifd[n];
-					}
+					//for(n=0;ENET.clifd[n]!=0;n++){
+                        //maxfd = (maxfd > ENET.clifd[n]) ? maxfd : ENET.clifd[n];
+					//}
                     updateFDSet = 1;
 				}
 			}
@@ -712,7 +715,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
             if( FD_ISSET(IPC.ipcfd, &readfds) ){
                 acceptIPCconnection(&IPC);
                 maxipc = 1;
-                maxfd = (maxfd > IPC.clifd) ? maxfd : IPC.clifd;
+                //maxfd = (maxfd > IPC.clifd) ? maxfd : IPC.clifd;
                 updateFDSet = 1;
             }
         }

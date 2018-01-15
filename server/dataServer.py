@@ -171,7 +171,7 @@ class dataServer():
 	def setRecLen(self,rl):
 		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
 		# the acquisition time window = [rl/20] us
-		if (rl > 0) and (rl < REC_LEN_MAX):
+		if (rl > 0) and (rl <= REC_LEN_MAX):
 			self.recLen = int(rl)
 		else:
 			print 'Invalid Record Length. [ Valid range = 1-8191 ]'
@@ -184,7 +184,7 @@ class dataServer():
 	def setPacketsize(self,ps):
 		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
 		# the acquisition time window = [rl/20] us
-		if (ps > 0) and (ps >= REC_LEN_MAX/64):
+		if (ps >= 128) and (ps <= self.recLen):
 			self.packetsize = int(ps)
 		else:
 			print 'Invalid Packet Size Length.'
@@ -297,7 +297,7 @@ class dataServer():
 		if self.boardCount > 0:
 			msg = struct.pack(self.cmsg,15,0,0,0,"")
 			self.ipcsock.send(msg)
-			self.boardNums = np.array(struct.Struct('{}{}{}'.format('=',self.boardCount,'i')).unpack(self.ipcsock.recv(self.boardCount*4,socket.MSG_WAITALL)))
+			self.boardNums = np.array(struct.Struct('{}{}{}'.format('=',self.boardCount,'I')).unpack(self.ipcsock.recv(self.boardCount*4,socket.MSG_WAITALL)))
 		else:
 			self.boardNums = 0
 			print 'no boards are connected to the cServer'

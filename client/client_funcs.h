@@ -289,8 +289,10 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 				for(n=0;ENET->sockfd[n]!=0;n++){
 					if( ( n == (g_nDataPorts-1) ) && ( g_recLen%g_packetsize > 0 ) ){
 						nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],(g_recLen%g_packetsize)*8*sizeof(uint8_t),0);
+                        //printf("sending data mod,%d,%d\n",nsent,ENET->sockfd[n]);
 					} else {
                         nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],g_packetsize*8*sizeof(uint8_t),0);
+                        //printf("sending data no mod,%d,%d\n",nsent,ENET->sockfd[n]);
 					}
                     if ( nsent == -1 ) perror("error sending data:");
 					setsockopt(ENET->sockfd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
