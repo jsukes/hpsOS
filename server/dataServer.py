@@ -154,6 +154,8 @@ import select
 import numpy as np
 from dataServerParamConfig import *
 
+
+
 class dataServer():
 
 	def setTrigDelay(self,td):
@@ -171,24 +173,27 @@ class dataServer():
 	def setRecLen(self,rl):
 		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
 		# the acquisition time window = [rl/20] us
-		if (rl > 0) and (rl <= REC_LEN_MAX):
+		if ( rl >= MIN_PACKETSIZE ) and (rl <= REC_LEN_MAX):
 			self.recLen = int(rl)
 		else:
-			print 'Invalid Record Length. [ Valid range = 1-8191 ]'
+			print 'Invalid Record Length. [ Valid range = 128-8192 ]. Setting recLen to 2048, packetsize to 512'
 			self.recLen = 2048
+			self.packetsize = 512
 			
 		msg = struct.pack(self.cmsg,1,self.recLen,0,0,"")
+		self.ipcsock.send(msg)
+		msg = struct.pack(self.cmsg,2,self.packetsize,0,0,"")
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
 	
 	def setPacketsize(self,ps):
 		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
 		# the acquisition time window = [rl/20] us
-		if (ps >= 128) and (ps <= self.recLen):
+		if (ps >= MIN_PACKETSIZE) and (ps <= self.recLen):
 			self.packetsize = int(ps)
 		else:
-			print 'Invalid Packet Size Length.'
-			self.packetsize = 512
+			print 'Invalid packetsize, setting equal to recLen.'
+			self.packetsize = self.recLen
 			
 		msg = struct.pack(self.cmsg,2,self.packetsize,0,0,"")
 		self.ipcsock.send(msg)
