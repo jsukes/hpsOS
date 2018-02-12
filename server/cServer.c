@@ -648,7 +648,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
             for(n=0;ENET.clifd[n]!=0;n++){ /* loops through all connected SoCs */
                 if(ENET.portNum[n]!=0){ /* check if it's a data socket ( dataSock port range = [1-64] )*/
                     if(FD_ISSET(ENET.clifd[n], &readfds)){ 
-                        
+						
                         /* sets the array index where the incoming data will be stored */
                         data_idx = ( ENET.boardIdx[ENET.boardNum[n]] )*g_idx1len*g_idx2len*g_idx3len*8*g_recLen;
                         data_idx += g_id1*g_idx2len*g_idx3len*8*g_recLen;
