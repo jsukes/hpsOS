@@ -155,7 +155,6 @@ import numpy as np
 from dataServerParamConfig import *
 
 
-
 class dataServer():
 
 	def setTrigDelay(self,td):
