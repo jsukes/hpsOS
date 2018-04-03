@@ -18,7 +18,7 @@ for ipAddr in $IPS; do
 		if [ "$tmp" -gt 100 ]; then
 			#dummy=$(ssh-keygen -R $ipAddr)
             #dummy=$(ssh-keyscan -H $ipAddr >> ~/.ssh/known_hosts)
-            echo "killall *HPS & exit" | sshpass -p 'terasic' ssh -t -t "root@$ipAddr" > /dev/null
+            echo "killall *HPS & exit" | sshpass -p 'terasic' ssh -tt "root@$ipAddr" > /dev/null
 			sleep 0.2
 			
 		fi
