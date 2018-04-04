@@ -25,7 +25,7 @@
 #define MAX_SOCKETS ( MAX_FPGAS * MAX_PORTS )
 #define IPCSOCK "./lithium_ipc"
 #define MAX_RECLEN 8192
-#define MIN_PACKETSIZE ( MAX_RECLEN/(MAX_PORTS-1) )
+#define MIN_PACKETSIZE 128
 
 #define CASE_SET_TRIGGER_DELAY 0
 #define CASE_SET_RECORD_LENGTH 1
@@ -43,9 +43,10 @@
 #define CASE_GET_BOARD_NUMS 15
 #define CASE_QUERY_DATA 16
 #define CASE_SHUTDOWN_SERVER 17
+#define CASE_SET_NUM_CONCURRENT_SENDERS 18
 
 const int ONE = 1;  /* need to have a variable that can be pointed to that always equals '1' for some of the socket options */
-const int ZERO = 0;  /* need to have a variable that can be pointed to that always equals '1' for some of the socket options */
+const int ZERO = 0;  /* need to have a variable that can be pointed to that always equals '0' for some of the socket options */
 /* global variables to keep track of runtime things, all global variables are prepended with 'g_'*/
 unsigned long g_trigDelay;
 unsigned long g_recLen, g_packetsize;
@@ -53,6 +54,7 @@ unsigned long g_idx1len, g_idx2len, g_idx3len;
 unsigned long g_id1, g_id2, g_id3;
 uint32_t g_numBoards, g_portMax;
 uint32_t g_connectedBoards[MAX_FPGAS];
+unsigned long g_concurrentSenders;
 
 
 struct ENETsock{ /* structure to store variables associated with ethernet connection */
@@ -95,6 +97,34 @@ void setupIPCsock(struct IPCsock *IPC){ /* function to open listening ipc socket
         perror("ERROR listening IPCsock");
         exit(1);
     }
+}
+
+
+void acceptIPCconnection(struct IPCsock *IPC){ /* function to accept incoming ipc connections (from python server) */
+    int t;
+    struct sockaddr_un remote;
+    t = sizeof(remote);
+    IPC->clifd = accept(IPC->ipcfd, (struct sockaddr *)&remote, &t);
+    printf("IPC socket accepted %d\n",IPC->clifd);
+}
+
+
+void setupENETserver(struct ENETsock *ENET){ /* function to set up ethernet socket to listen for incoming connections */
+    int n,pn;
+    for(n=0;n<MAX_PORTS;n++){
+		pn = INIT_PORT+n;
+		ENET->sockfd[n] = socket(AF_INET, SOCK_STREAM, 0);
+		ENET->server[n].sin_family = AF_INET;
+		ENET->server[n].sin_addr.s_addr = INADDR_ANY;
+		ENET->server[n].sin_port = htons(pn);
+		setsockopt(ENET->sockfd[n],SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof(int));
+
+		if( bind(ENET->sockfd[n], (struct sockaddr *)&ENET->server[n], sizeof(ENET->server[n])) < 0 ){
+			perror("ERROR binding socket");
+			exit(1);
+		}
+		listen(ENET->sockfd[n],MAX_FPGAS);
+	}
 }
 
 
@@ -194,41 +224,6 @@ void acceptENETconnection(struct ENETsock *ENET,int pn){ /* function to accept i
 }
 
 
-void acceptIPCconnection(struct IPCsock *IPC){ /* function to accept incoming ipc connections (from python server) */
-    int t;
-    struct sockaddr_un remote;
-    t = sizeof(remote);
-    IPC->clifd = accept(IPC->ipcfd, (struct sockaddr *)&remote, &t);
-    printf("IPC socket accepted %d\n",IPC->clifd);
-}
-
-
-void setupENETserver(struct ENETsock *ENET){ /* function to set up ethernet socket to listen for incoming connections */
-    int n,pn;
-    for(n=0;n<MAX_PORTS;n++){
-		pn = INIT_PORT+n;
-		ENET->sockfd[n] = socket(AF_INET, SOCK_STREAM, 0);
-		ENET->server[n].sin_family = AF_INET;
-		ENET->server[n].sin_addr.s_addr = INADDR_ANY;
-		ENET->server[n].sin_port = htons(pn);
-		setsockopt(ENET->sockfd[n],SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof(int));
-
-		if( bind(ENET->sockfd[n], (struct sockaddr *)&ENET->server[n], sizeof(ENET->server[n])) < 0 ){
-			perror("ERROR binding socket");
-			exit(1);
-		}
-		listen(ENET->sockfd[n],MAX_FPGAS);
-	}
-}
-
-
-void resetGlobalVars(){ /* function to reset all global variables, global variables are prepended with 'g_' */
-    g_recLen = 2048; g_trigDelay = 0; g_packetsize = 512;
-    g_idx1len = 1; g_idx2len = 1; g_idx3len = 1;
-    g_id1 = 0; g_id2 = 0; g_id3 = 0;
-}
-
-
 void sendENETmsg(struct ENETsock *ENET, uint32_t *msg){ /* function to send messages to socs over ethernet */
     /* This function takes as inputs the structure containing the ENET connections, the message to be communicated to the SoCs, and the number of SoCs
        connected to the server
@@ -246,6 +241,34 @@ void sendENETmsg(struct ENETsock *ENET, uint32_t *msg){ /* function to send mess
             setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
         }
     }
+}
+
+
+void sendENETmsgSingle(struct ENETsock *ENET, uint32_t *msg, int boardIdx){ /* function to send messages to socs over ethernet */
+    /* This function takes as inputs the structure containing the ENET connections, the message to be communicated to the SoCs, and the number of SoCs
+       connected to the server
+        
+        - msg is a 4 element array
+        - msg[0] contains the 'CASE_...' variable which is an identifier to inform the soc what action to be taken based on the contents of
+          msg[1]-msg[3]
+        - msg[1]-msg[3] contain 32-bit numbers with data for the SoCs depending on the function (ie recLen or trigDelay)
+    */
+
+    int n;
+    for(n=0;ENET->clifd[n]!=0;n++){
+        if( ENET->portNum[n] == 0 && ENET->boardIdx[n] == boardIdx ){
+            send(ENET->clifd[n],msg,4*sizeof(uint32_t),0);
+            setsockopt(ENET->clifd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
+        }
+    }
+}
+
+
+void resetGlobalVars(){ /* function to reset all global variables, global variables are prepended with 'g_' */
+    g_recLen = 2048; g_trigDelay = 0; g_packetsize = 512;
+    g_idx1len = 1; g_idx2len = 1; g_idx3len = 1;
+    g_id1 = 0; g_id2 = 0; g_id3 = 0;
+    g_concurrentSenders = 0;
 }
 
 
@@ -267,6 +290,7 @@ void resetFPGAdataAcqParams(struct ENETsock *ENET){ /* function to reset data ac
 }
 
 
+
 int main(int argc, char *argv[]) { printf("into main!\n");
 	
     resetGlobalVars();                                                  /* sets all the global variables to their defualt values */
@@ -285,7 +309,9 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     setupIPCsock(&IPC);                                                 /* calls function to listen for incoming ipc connections from (python) */
 
     struct FIFOmsg fmsg;                                                /* creates messaging variable to carry ipc messages */
-    
+    struct FIFOmsg qmsg = {.msg=0};                                     /* special message variable to query data from socs */
+    qmsg.msg[0]=CASE_QUERY_DATA;
+
     int n,m,k,l;   
     int maxfd,maxipc,updateFDSet;                                       /* variable to store the highest value of a connected fd  */
 
@@ -611,10 +637,18 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 						}
 						
 						case(CASE_QUERY_DATA):{
-							sendENETmsg(&ENET,fmsg.msg);
-                            recvCount = 0;
-							//printf("waiting for data\n\n");                
-                            break;
+                            if( g_concurrentSenders == 0 ){
+							    sendENETmsg(&ENET,fmsg.msg);
+                                recvCount = 0;
+							    //printf("waiting for data\n\n");                
+                                break;
+                            } else {
+                                for(n=0;n<g_concurrentSenders;n++){
+                                    sendENETmsgSingle(&ENET,qmsg.msg,n);
+                                }
+                                recvCount = 0;
+                                l = g_concurrentSenders;
+                            }
 						}
 						
                         case(CASE_SHUTDOWN_SERVER):{
@@ -627,6 +661,19 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             sendENETmsg(&ENET,fmsg.msg);
                             runner = 0;
                             printf("shutting server down\n\n");
+                            break;
+                        }
+
+                        case(CASE_SET_NUM_CONCURRENT_SENDERS):{
+                            /* sets how many socs can transfer their data to the cServer at once
+                                - default value of 0 means they all send their data at the same time
+                            */
+                            if( fmsg.msg[1] <= g_numBoards ){
+                                g_concurrentSenders = ( fmsg.msg[1] == g_numBoards ) ? 0 : fmsg.msg[1];
+                            } else {
+                                printf("invalid number of concurrent senders, setting to 0\n"); 
+                                g_concurrentSenders = 0;
+                            }
                             break;
                         }
 
@@ -674,6 +721,13 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             ENET.clifd[n]=-1;
                         }
 
+                        if( g_concurrentSenders != 0 ){
+                            if( ( (ENET.p_idx[n]%(g_recLen*sizeof(uint64_t))) == 0 ) && ( l < g_numBoards ) ){
+                                sendENETmsgSingle(&ENET,qmsg.msg,l);
+                                l++;
+                            }
+                        }
+                        
                         /* if all data has been collected by cServer, let the python UI know so it can move on with the program */
                         if( recvCount == g_recLen*sizeof(uint64_t)*g_numBoards ){
                             if(send(IPC.clifd,&n,sizeof(int),0) == -1){

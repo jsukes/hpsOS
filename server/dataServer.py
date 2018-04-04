@@ -330,6 +330,16 @@ class dataServer():
 		self.ipcsock.close()
 		time.sleep(0.05)
 
+	def setConcurrentSenders(self,concSenders):
+		# sets the number of socs that can concurrently send data to the cServer
+		if concSenders >= 0 and concSenders <= self.getBoardCount():
+			self.concSenders = concSenders
+		else:
+			self.concSenders = 0
+			
+		msg = struct.pack(self.cmsg,18,self.concSenders,0,0,"")
+		self.ipcsock.send(msg)
+		
 	def disconnect(self): 
 		# disconnect python from the C server but leave it running in the background so you can reconnect to it later
 		self.ipcsock.close()
@@ -361,6 +371,7 @@ class dataServer():
 		self.l1, self.l2, self.l3 = 1,1,1
 		self.boardCount = 0
 		self.boardNums = []
+		self.concSenders = 0
 		
 
 	
