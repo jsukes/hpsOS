@@ -1,5 +1,5 @@
 #
-TARGET = devTestHPS
+TARGET = meshTestHPS
 
 #
 CROSS_COMPILE = arm-linux-gnueabihf-
