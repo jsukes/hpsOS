@@ -26,6 +26,9 @@ extern int errno;
 #define IPCSOCK "./lithium_ipc"
 #define MAX_RECLEN 8192
 #define MIN_PACKETSIZE 128
+#define LISTEN_PORT -1
+#define IPC_COMMPORT 0
+#define ENET_COMMPORT INIT_PORT
 
 #define CASE_SET_TRIGGER_DELAY 0
 #define CASE_SET_RECORD_LENGTH 1
@@ -62,36 +65,13 @@ struct epoll_event ev;
 struct epoll_event events[MAX_SOCKETS];
 
 
-struct ENETserver{
-    int listenfd[MAX_PORTS];
-    struct sockaddr_in server[MAX_PORTS];
-    const char *serverIP;
-};
-
-
-struct IPCserver{ /* structure to store variables for interprocess communication (ipc) socket (for communicating with python) */
-    int listenfd;                  /* fd of the listening ipc socket in the cServer */
-    struct sockaddr_un local;   /* ipc socket variable */
-    int len;                    /* variable to store length of the string in IPCSOCK */
-};
-
-
-struct ENETsock{
+struct POLLsock{
     int clifd;
     int p_idx;
     int boardNum;
     int portNum;
-};
-
-
-struct COMMsock{
-    int clifd[MAX_FPGAS];
-    int boardNum[MAX_FPGAS];
-};
-
-
-struct IPCsock{
-    int clifd;
+    struct POLLsock *next;
+    struct POLLsock *prev;
 };
 
 
@@ -110,37 +90,60 @@ struct FIFOmsg{ /* structure to store variables for communications between cServ
 };
 
 
-void setupIPCserver(struct IPCserver *IPC){ /* function to open listening ipc socket for connections from other processes (python server) */
-    IPC->listenfd = socket(AF_UNIX, SOCK_STREAM, 0);
-    setnonblocking(IPC->listenfd);
-    ev.data.fd = IPC->listenfd;
-    ev.events = EPOLLIN;
-    epoll_ctl(epfd,EPOLL_CTL_ADD,IPC->listenfd,&ev);
-    IPC->local.sun_family = AF_UNIX;
-    strcpy(IPC->local.sun_path,IPCSOCK);
-    unlink(IPC->local.sun_path);
-    IPC->len = strlen(IPC->local.sun_path)+sizeof(IPC->local.sun_family);
-    if( bind( IPC->listenfd, (struct sockaddr *)& IPC->local, IPC->len) < 0){
-        perror("ERROR binding IPCsock");
-        exit(1);
-    }
-    if( listen(IPC->listenfd,MAX_IPC)){
-        perror("ERROR listening IPCsock");
-        exit(1);
-    }
+void addPollSock(struct POLLsock **psock){
+    struct POLLsock* ps;
+    ps = (struct POLLsock *)malloc(sizeof(struct POLLsock));
+    ps->next = *psock;
+    ps->prev = NULL;
+    (*psock)->prev = ps;
+    *psock = ps;
 }
 
 
-void acceptIPCconnection(struct IPCserver *IPC, struct IPCsock *IPCS){ /* function to accept incoming ipc connections (from python server) */
+void setupIPCserver(struct POLLsock **psock, struct SERVERsock **ssock){ /* function to open listening ipc socket for connections from other processes (python server) */
+    int len;
+    struct sockaddr_un local;
+
+    addPollSock(psock);
+    struct POLLsock *ps;
+    ps = (*psock);
+    ps->portNum = LISTEN_PORT;
+    
+    ps->clifd = socket(AF_UNIX, SOCK_STREAM, 0);
+    setnonblocking(ps->clifd);
+    ev.data.fd = ps->clifd;
+    ev.events = EPOLLIN;
+    epoll_ctl(epfd,EPOLL_CTL_ADD,ps->clifd,&ev);
+    local.sun_family = AF_UNIX;
+    strcpy(local.sun_path,IPCSOCK);
+    unlink(local.sun_path);
+    len = strlen(local.sun_path)+sizeof(local.sun_family);
+    if( bind( ps->clifd, (struct sockaddr *)& local, len) < 0){
+        perror("ERROR binding IPCsock");
+        exit(1);
+    }
+    if( listen(ps->clifd,MAX_IPC)){
+        perror("ERROR listening IPCsock");
+        exit(1);
+    }
+
+}
+
+
+void acceptIPCconnection(struct POLLsock **psock, int listenfd){ /* function to accept incoming ipc connections (from python server) */
     int t;
     struct sockaddr_un remote;
+    addPollSock(psock);
+    struct POLLsock *ps;
+    ps = (*psock);
+
     t = sizeof(remote);
-    IPCS->clifd = accept(IPC->listenfd, (struct sockaddr *)&remote, &t);
-    setnonblocking(IPCS->clifd);
-    ev.data.fd = IPCS->clifd;
+    ps->clifd = accept(listenfd, (struct sockaddr *)&remote, &t);
+    setnonblocking(ps->clifd);
+    ev.data.fd = ps->clifd;
     ev.events = EPOLLIN;
-    epoll_ctl(epfd,EPOLL_CTL_ADD,IPCS->clifd,&ev);
-    printf("IPC socket accepted %d\n",IPCS->clifd);
+    epoll_ctl(epfd,EPOLL_CTL_ADD,ps->clifd,&ev);
+    printf("IPC socket accepted %d\n",ps->clifd);
 }
 
 
@@ -322,6 +325,9 @@ int main(int argc, char *argv[]) { printf("into main!\n");
         if( nfds > 0 ){
 
             for(n = 0; n < nfds; n++){
+
+                enet = (struct ENETsock *)events[n].data.ptr;
+
                 if(events[n].data.fd == IPCserv.listenfd){ /* new IPC connection */
                     acceptIPCconnection(&IPCserv,&IPC);
                 
