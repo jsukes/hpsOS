@@ -55,9 +55,12 @@ unsigned long g_trigDelay;
 unsigned long g_recLen, g_packetsize;
 unsigned long g_idx1len, g_idx2len, g_idx3len;
 unsigned long g_id1, g_id2, g_id3;
-uint32_t g_numBoards, g_portMax;
-uint32_t g_connectedBoards[MAX_FPGAS+1];
 unsigned long g_concurrentSenders;
+
+uint32_t g_connectedBoards[MAX_FPGAS+1];
+uint32_t g_numBoards, g_portMax, g_numPorts;
+
+int g_enetCommFd[MAX_FPGAS+1] = {0};
 int g_enetBoardIdx[MAX_FPGAS+1] = {0};
 
 int epfd;
@@ -73,11 +76,12 @@ struct FIFOmsg{ /* structure to store variables for communications between cServ
 
 struct POLLsock{
     int clifd;
-    int p_idx;
-    int boardNum;
-    int portNum;
     int is_enet;
     int is_listener;
+    int boardNum;
+    int portNum;
+    int p_idx;
+    int dataLen;
     uint8_t *data_addr;
     struct POLLsock *next;
     struct POLLsock *prev;
@@ -86,10 +90,10 @@ struct POLLsock{
 
 void setnonblocking(int sock){
     int opts;
-    if((opts=fcntl(sock,F_GETFL))<0) errexit("GETFL %d failed",sock);
+    if((opts=fcntl(sock,F_GETFL))<0) perror("GETFL nonblocking failed");
     
     opts = opts | O_NONBLOCK;
-    if(fcntl(sock,F_SETFL,opts)<0) errexit("SETFL %d failed",sock);
+    if(fcntl(sock,F_SETFL,opts)<0) perror("SETFL nonblocking failed");
 }
 
 
@@ -98,8 +102,34 @@ void addPollSock(struct POLLsock **psock){
     ps = (struct POLLsock *)malloc(sizeof(struct POLLsock));
     ps->next = *psock;
     ps->prev = NULL;
-    (*psock)->prev = ps;
+    if(*psock != NULL)
+        (*psock)->prev = ps;
     *psock = ps;
+}
+
+
+void deletePollSock(struct POLLsock **psock, int clifd){ 
+    struct POLLsock *ps, *prev, *next;
+    ps = (*psock);
+    while(ps != NULL){
+        next = ps->next;
+        prev = ps->prev;
+        if(ps->clifd == clifd){
+            if(next != NULL){
+                next->prev = prev;
+            }
+            if(prev != NULL){
+                prev->next = next;
+            }
+            if(prev == NULL){
+                (*psock) = next;
+            }
+            free(ps);
+            break;
+        }
+        ps = ps->next;
+    }
+    close(clifd);
 }
 
 
@@ -109,7 +139,7 @@ void setupIPCserver(struct POLLsock **psock){ /* function to open listening ipc 
     
     addPollSock(psock);
     ps = (*psock);
-    ps->portNum = LISTEN_PORT;
+    ps->portNum = -1;
     ps->is_enet = 0;
     ps->is_listener = 1;
     ps->clifd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -142,7 +172,7 @@ void acceptIPCconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* func
     socklen_t clilen;
     
     clilen = sizeof(remote);
-    memset(&remote,0,sizeof(struct sockadd_ur));
+    memset(&remote,0,sizeof(struct sockaddr_un));
 
     addPollSock(psock);
     ps = (*psock);
@@ -172,7 +202,6 @@ void setupENETserver(struct POLLsock **psock){ /* function to set up ethernet so
         ps->portNum = INIT_PORT + n;
 		ps->clifd = socket(AF_INET, SOCK_STREAM, 0);
         setnonblocking(ps->clifd);
-        
         ev.data.ptr = ps;
         ev.events = EPOLLIN;
         epoll_ctl(epfd,EPOLL_CTL_ADD,ps->clifd,&ev);
@@ -180,14 +209,14 @@ void setupENETserver(struct POLLsock **psock){ /* function to set up ethernet so
         memset(&server[n],0,sizeof(struct sockaddr_in));
 		server[n].sin_family = AF_INET;
 		server[n].sin_addr.s_addr = INADDR_ANY;
-		server[n].sin_port = htons(pn);
+		server[n].sin_port = htons(ps->portNum);
 		setsockopt(ps->clifd,SOL_SOCKET, SO_REUSEADDR, &ONE, sizeof(int));
 
 		if( bind(ps->clifd, (struct sockaddr *)&server[n], sizeof(struct sockaddr_in)) < 0 ){
 			perror("ERROR binding socket");
 			exit(1);
 		}
-		if( listen(ps->clifd,MAX_FPGAS)){
+		if( listen(ps->clifd,MAX_FPGAS) ){
             perror("ERROR listening ENETsock");
             exit(1);
         }
@@ -195,7 +224,7 @@ void setupENETserver(struct POLLsock **psock){ /* function to set up ethernet so
 }
 
 
-void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp, int *enetCommFd){ /* function to accept incoming ethernet connections from the socs */
+void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* function to accept incoming ethernet connections from the socs */
     /*  This function accepts new ethernet connections from the SoC's after the listening socket gets a connection request.
         - After receiving the connection request, the function loops through the array of file descriptors for the connected devices (ENET->clifd) and
           accepts the new connection into the first empty spot.
@@ -214,6 +243,7 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp, int *en
     ps = (*psock);
     ps->clifd = accept(tmp->clifd, (struct sockaddr *)&client, &clilen);
     ps->portNum = tmp->portNum;
+    ps->is_enet = 1;
     ps->is_listener = 0;
     setnonblocking(ps->clifd);
     
@@ -226,13 +256,14 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp, int *en
     int msg[4];
     n = recv(ps->clifd,&msg,4*sizeof(int),MSG_WAITALL);
     ps->boardNum = msg[0];
-    if(ps->portNum = ENET_COMMPORT){
-        enetCommFd[ps->boardNum] = ps->clifd;
+    if(ps->portNum == ENET_COMMPORT){
+        g_enetCommFd[ps->boardNum] = ps->clifd;
     }
+    printf("connected to board %d, port %d\n",ps->boardNum,ps->portNum);
 }
 
 
-void sendENETmsg(int *enetCommFd, uint32_t *msg){ /* function to send messages to socs over ethernet */
+void sendENETmsg(uint32_t *msg){ /* function to send messages to socs over ethernet */
     /* This function takes as inputs the structure containing the ENET connections, the message to be communicated to the SoCs, and the number of SoCs
        connected to the server
         
@@ -243,17 +274,17 @@ void sendENETmsg(int *enetCommFd, uint32_t *msg){ /* function to send messages t
     */
     int n;
     for(n=0;n<MAX_FPGAS;n++){
-        if(enetCommFd[n]!=0){
-            send(enetCommFd[n],msg,4*sizeof(uint32_t),0);
-            setsockopt(enetCommFd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
+        if(g_enetCommFd[n]!=0){
+            send(g_enetCommFd[n],msg,4*sizeof(uint32_t),0);
+            setsockopt(g_enetCommFd[n],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
         }
     }
 }
 
 
-void sendENETmsgSingle(int *enetCommFd, uint32_t *msg, int boardNum){ /* function to send messages to socs over ethernet */
-    send(enetCommFd[boardNum],msg,4*sizeof(uint32_t),0);
-    setsockopt(enetCommFd[boardNum],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
+void sendENETmsgSingle(uint32_t *msg, int boardNum){ /* function to send messages to socs over ethernet */
+    send(g_enetCommFd[boardNum],msg,4*sizeof(uint32_t),0);
+    setsockopt(g_enetCommFd[boardNum],IPPROTO_TCP, TCP_QUICKACK, &ONE, sizeof(int));
 }
 
 
@@ -265,7 +296,7 @@ void resetGlobalVars(){ /* function to reset all global variables, global variab
 }
 
 
-void setDataPointers(struct POLLsock **psock, uint8_t **data){
+void setDataAddrPointers(struct POLLsock **psock, uint8_t **data){
     g_numBoards = 0;
     struct POLLsock* ps;
     ps = (*psock);
@@ -274,28 +305,69 @@ void setDataPointers(struct POLLsock **psock, uint8_t **data){
     ps = (*psock);
     dtmp = (*data);
     while(ps!=NULL){
-        if( ps->is_enet && !ps->is_listener && ps->portNum > ENET_COMMPORT ){
+        if( ps->is_enet && !ps->is_listener && ps->portNum != ENET_COMMPORT ){
             ps->data_addr = &dtmp[8*(g_enetBoardIdx[ps->boardNum]*g_recLen+(ps->portNum-ENET_COMMPORT-1)*g_packetsize)];
+            if(g_recLen % g_packetsize){
+                if(ps->portNum == g_portMax){
+                    ps->dataLen = g_recLen%g_packetsize;
+                } else {
+                    ps->dataLen = g_packetsize;
+                }                
+            } else {
+                ps->dataLen = g_packetsize;
+            }
+        }
+        ps = ps->next;
+    }
+}
+
+
+void updateBoardInfo(struct POLLsock **psock){
+    int l,k;
+    struct POLLsock *ps;
+    ps = (*psock);
+    int enetCommFd[MAX_FPGAS+1] = {0};
+    g_portMax = 0;
+    g_numBoards = 0;
+
+    while( ps!=NULL ){
+        if( ps->is_enet && !ps->is_listener && ps->portNum != ENET_COMMPORT ){
+            g_portMax = (ps->portNum > g_portMax) ? ps->portNum : g_portMax;    
+        } else if( ps->is_enet && !ps->is_listener && ps->portNum == ENET_COMMPORT ){
+            enetCommFd[ps->boardNum] = ps->clifd;
+            g_numBoards++;
+        }
+        ps = ps->next;
+    }
+    g_numPorts = g_portMax-ENET_COMMPORT; 
+    l=0;
+    for( k=0; k<MAX_FPGAS+1; k++ ){
+        g_enetCommFd[k] = enetCommFd[k];
+        g_connectedBoards[k] = 0;
+        if(enetCommFd[k]!=0){
+            g_connectedBoards[l] = k;
+            g_enetBoardIdx[k] = l;
+            l++;
         }
     }
 }
 
 
-void resetFPGAdataAcqParams(int *enetCommFd){ /* function to reset data acquisition variables on the SoCs */
+void resetFPGAdataAcqParams(){ /* function to reset data acquisition variables on the SoCs */
     /* this function makes a message variable, populates it with the default data acquisition variables, and sends it to the SoCs*/
     uint32_t fmsg[4] ={0};
 
     fmsg[0] = CASE_TOGGLE_DATA_ACQUISITION; fmsg[1] = 0;
-    sendENETmsg(enetCommFd,fmsg);
+    sendENETmsg(fmsg);
     
     fmsg[0] = CASE_SET_TRIGGER_DELAY; fmsg[1] = g_trigDelay;
-    sendENETmsg(enetCommFd,fmsg);
+    sendENETmsg(fmsg);
     
     fmsg[0] = CASE_SET_RECORD_LENGTH; fmsg[1] = g_recLen;
-    sendENETmsg(enetCommFd,fmsg);
+    sendENETmsg(fmsg);
 
     fmsg[0] = CASE_SET_PACKETSIZE; fmsg[1] = g_packetsize;
-    sendENETmsg(enetCommFd,fmsg);
+    sendENETmsg(fmsg);
 }
 
 
@@ -304,7 +376,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     resetGlobalVars();                                                  /* sets all the global variables to their defualt values */
     g_numBoards = 0;
     g_portMax = 0;
-    
+    g_numPorts = 0;
+
     epfd = epoll_create(MAX_SOCKETS);
 
     struct POLLsock *psock = NULL;
@@ -313,7 +386,6 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     struct POLLsock *ps;
     
     int ipcCommFd = 0;
-    int enetCommFd[MAX_FPGAS+1] = {0};
     struct FIFOmsg fmsg;                                                /* creates messaging variable to carry ipc messages */
 
     uint8_t *data;                                                      /* array to store acquired data */
@@ -328,25 +400,20 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     
     g_concurrentSenders = 0;
     k=0;
-    maxipc = 0;                                                         /* initializes the number of connected SoCs and ipc to 0 */
     dataAcqGo = 1;
     runner = 1;
     timeout_ms = 1000;
     while(runner == 1){
-        
         /* polls the fds in readfds for readable data, returns number of fds with data (nready), returns '0' if it times out. */
         nfds = epoll_wait(epfd, events, MAX_SOCKETS, timeout_ms);          
 		
         if( nfds > 0 ){
-
             for(n = 0; n < nfds; n++){
 
                 ps = (struct POLLsock *)events[n].data.ptr;
-                
                 if(!ps->is_enet){
                     if( ps->is_listener ){
                         acceptIPCconnection(&psock,ps);
-
                     } else if ( events[n].events & EPOLLIN ) {
                         /* The IPC socket is used to handle all messages between the cServer and the user interface (python) 
                             all messages from (python) contain two fields 'msg' and 'buff' ( given in struct FIFOmsg )
@@ -359,12 +426,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         
                         fmsg.msg[0]=0; fmsg.msg[1]=0; fmsg.msg[2]=0; fmsg.msg[3]=0; /* resets all the 'msg' variables before reading new ones */
                         nrecv = recv(ps->clifd,&fmsg,sizeof(struct FIFOmsg),MSG_WAITALL);
-                        if ( nrecv < 0 ){ 
+                        if ( nrecv < 0 ){
                             printf("IPC read error, shutting down\n");
                             break;  /* error condition 'breaks' out of the while loop and shuts down server */
 
                         } else if(nrecv == 0){
-                            deletePollSock(&psock,ps);
+                            deletePollSock(&psock,ps->clifd);
 
                         } else {
                             switch(fmsg.msg[0]){ /* msg[0] contains the command code for the message */
@@ -390,12 +457,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                      */
                                     if(fmsg.msg[1] >= 0){
                                         g_trigDelay = fmsg.msg[1];
-                                        sendENETmsg(enetCommFd,fmsg.msg);
+                                        sendENETmsg(fmsg.msg);
                                         printf("trigDelay set to: %lu us\n\n",g_trigDelay);
                                     } else {
                                         g_trigDelay = 0;
                                         fmsg.msg[1] = 0;
-                                        sendENETmsg(enetCommFd,fmsg.msg);
+                                        sendENETmsg(fmsg.msg);
                                         printf("invalid trigDelay value, defaulting to 0 us\n\n");
                                     }
                                     break;
@@ -411,38 +478,38 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                      */
                                     if(fmsg.msg[1] >= MIN_PACKETSIZE && fmsg.msg[1] <= MAX_RECLEN){
                                         g_recLen = fmsg.msg[1];
-                                        sendENETmsg(enetCommFd,fmsg.msg);
+                                        sendENETmsg(fmsg.msg);
                                         printf("recLen set to: %lu\n\n",g_recLen);
                                         if(g_packetsize>g_recLen){
                                             printf("previous packetsize (%lu) too large, setting equal to recLen (%lu)\n",g_packetsize,g_recLen);
                                             g_packetsize = g_recLen;
                                             fmsg.msg[0] = CASE_SET_PACKETSIZE; fmsg.msg[1] = g_packetsize;
-                                            sendENETmsg(enetCommFd,fmsg.msg);
+                                            sendENETmsg(fmsg.msg);
                                         }
                                     } else {
                                         printf("invalid recLen, reseting global variables\n"); 
                                         resetGlobalVars();
                                         k = 0;
-                                        resetFPGAdataAcqParams(enetCommFd);
+                                        resetFPGAdataAcqParams();
                                         data = (uint8_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t));
                                         printf("global variables reset to defaults\n");
                                     }
-                                    setDataPointers(&psock,&data);
+                                    setDataAddrPointers(&psock,&data);
                                     break;
                                 }
 
                                 case(CASE_SET_PACKETSIZE):{
                                     if(fmsg.msg[1] <= g_recLen && fmsg.msg[1] >= MIN_PACKETSIZE){
                                         g_packetsize = fmsg.msg[1];
-                                        sendENETmsg(enetCommFd,fmsg.msg);
+                                        sendENETmsg(fmsg.msg);
                                         printf("packetsize set to: %lu\n\n",g_packetsize);
                                     } else {
                                         printf("invalid packetsize (%lu), setting equal to recLen (%lu)\n",(unsigned long)fmsg.msg[1],g_recLen); 
                                         g_packetsize = g_recLen;
                                         fmsg.msg[1] = g_recLen;
-                                        sendENETmsg(enetCommFd,fmsg.msg);
+                                        sendENETmsg(fmsg.msg);
                                     }
-                                    setDataPointers(&psock,&data);
+                                    setDataAddrPointers(&psock,&data);
                                     break;
                                 }
 
@@ -494,12 +561,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                     */
                                     if(fmsg.msg[1] == 1){
                                         dataAcqGo = fmsg.msg[1];
-                                        sendENETmsg(enetCommFd,fmsg.msg);
+                                        sendENETmsg(fmsg.msg);
                                         printf("data acquisition started\n\n");
                                     } else {
                                         dataAcqGo = 0;
                                         fmsg.msg[1] = 0;
-                                        sendENETmsg(enetCommFd,fmsg.msg);
+                                        sendENETmsg(fmsg.msg);
                                         printf("data acquisition stopped\n\n");
                                     }
                                     break;
@@ -533,7 +600,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                           the UI to do it would be kind of messy, and the reconnection process isn't automated on a per board level yet, so i
                                           just disabled the option. may be incorporated in the future though.
                                     */
-                                    sendENETmsg(enetCommFd,fmsg.msg);
+                                    sendENETmsg(fmsg.msg);
                                     printf("shutting down FPGAs\n");
                                     break;
                                 }
@@ -544,11 +611,11 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                     */
                                     resetGlobalVars();
                                     k = 0;
-                                    resetFPGAdataAcqParams(enetCommFd);
+                                    resetFPGAdataAcqParams();
                                     data = (uint8_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t));
                                     printf("global variables reset to defaults\n");
                                     printf("data reset to size [%lu, %lu, %lu, %lu, %d]\n\n", g_idx1len,g_idx2len,g_idx3len,g_recLen,MAX_FPGAS);
-                                    setDataPointers(&psock,&data);
+                                    setDataAddrPointers(&psock,&data);
                                     break;
                                 }
 
@@ -594,6 +661,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 case(CASE_GET_BOARD_COUNT):{
                                     /* This function returns the number of socs connected to the cServer via ethernet to the python UI 
                                         - msg[1], msg[2], msg[3]*, and buff are unused.*/
+                                    printf("trying to get boardCount\n");
+                                    updateBoardInfo(&psock);
                                     if(send(ps->clifd,&g_numBoards,sizeof(uint32_t),MSG_CONFIRM) == -1){
                                         perror("IPC send failed\n");
                                         exit(1);
@@ -604,6 +673,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 case(CASE_GET_BOARD_NUMS):{
                                     /* This function returns the board numbers of the connected socs to the python UI 
                                         - msg[1], msg[2], msg[3]*, and buff are unused.*/	
+                                    printf("trying to get boardNums\n");
+                                    updateBoardInfo(&psock);
                                     if(send(ps->clifd,g_connectedBoards,g_numBoards*sizeof(uint32_t),MSG_CONFIRM) == -1){
                                         perror("IPC send failed\n");
                                         exit(1);
@@ -613,15 +684,14 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 
                                 case(CASE_QUERY_DATA):{
                                     if( g_concurrentSenders == 0 ){
-                                        sendENETmsg(enetCommFd,fmsg.msg);
+                                        sendENETmsg(fmsg.msg);
                                         recvCount = 0;
                                         //printf("waiting for data\n\n");
                                     } else {
                                         for(n=0;n<g_concurrentSenders;n++){
-                                            sendENETmsgSingle(enetCommFd,fmsg.msg,n);
+                                            sendENETmsgSingle(fmsg.msg,n);
                                         }
                                         recvCount = 0;
-                                        concSendCnt = g_concurrentSenders;
                                     }
                                     break;
                                 }
@@ -633,7 +703,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                           shutdown the sever.
                                     */
                                     fmsg.msg[0]=8;
-                                    sendENETmsg(enetCommFd,fmsg.msg);
+                                    sendENETmsg(fmsg.msg);
                                     runner = 0;
                                     printf("shutting server down\n\n");
                                     break;
@@ -646,7 +716,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                      
                                     printf("invalid message, shutting down server,%d, %d, %d, %d\n",fmsg.msg[0],fmsg.msg[1],fmsg.msg[2],fmsg.msg[3]);
                                     fmsg.msg[0]=8; 
-                                    sendENETmsg(enetCommFd,fmsg.msg);
+                                    sendENETmsg(fmsg.msg);
                                     break;
                                 }
                             }
@@ -654,18 +724,10 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                     }
                 } else {
                     if( ps->is_listener ){
-                        acceptENETconnection(&psock,ps,enetCommFd);
-                        /* make a function 'getBoardInfo' to do this, also make enetCommFd global and update it with said function */
-                        l=0;
-                        for(k=0;k<MAX_FPGAS+1;k++){
-                            if(enetCommFd[k]!=0){
-                                g_enetBoardIdx[k] = l;
-                                l++;
-                            }
-                        }
-                        g_numBoards = l+1;
+                        acceptENETconnection(&psock,ps);
+                        updateBoardInfo(&psock);
+                    
                     } else if ( events[n].events & EPOLLIN ){
-                        /* recv data */
                         nrecv = recv(ps->clifd,(ps->data_addr+ps->p_idx),g_packetsize*8*sizeof(uint8_t),0);
 						
                         if (nrecv > 0){
@@ -674,7 +736,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             ps->p_idx += nrecv; 
                         } else {
                             if (nrecv == -1) perror("data recv error: ");
-                            deletePollSock(&psock,ps);
+                            deletePollSock(&psock,ps->clifd);
                         }
                         
                         /* if all data has been collected by cServer, let the python UI know so it can move on with the program */
@@ -685,6 +747,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 exit(1);
                             }
                             /* reset the sockets partial index variables */
+                            ps = psock;
                             while(psock->next!=NULL){
                                 if((psock->is_enet) && (!psock->is_listener) && (psock->portNum != ENET_COMMPORT) ){
                                     psock->p_idx=0;
@@ -692,6 +755,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 }
                                 psock = psock->next;
                             }
+                            psock = ps;
                             recvCount = 0;
                         }
                     }
