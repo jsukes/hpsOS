@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <errno.h> // unused
 #include <sys/time.h> // unused
+#include <pthread.h>
 extern int errno;
 
 //TESTING GIT PUSHES
@@ -62,10 +63,21 @@ uint32_t g_numBoards, g_portMax, g_numPorts;
 
 int g_enetCommFd[MAX_FPGAS+1] = {0};
 int g_enetBoardIdx[MAX_FPGAS+1] = {0};
+int g_recvCount = 0;
+
+
+struct task{
+    epoll_data_t data;
+    struct task* next;
+};
+
 
 int epfd;
 struct epoll_event ev;
 struct epoll_event events[MAX_SOCKETS];
+pthread_mutex_t r_mutex;
+pthread_cond_t r_condl;
+struct task *readhead = NULL, *readtail = NULL;
 
 
 struct FIFOmsg{ /* structure to store variables for communications between cServer and (python) via FIFO instead of ipc socket */
@@ -98,38 +110,42 @@ void setnonblocking(int sock){
 
 
 void addPollSock(struct POLLsock **psock){
-    struct POLLsock* ps;
+    struct POLLsock *ps, *next;
     ps = (struct POLLsock *)malloc(sizeof(struct POLLsock));
-    ps->next = *psock;
-    ps->prev = NULL;
-    if(*psock != NULL)
-        (*psock)->prev = ps;
-    *psock = ps;
+    if(*psock == NULL){
+        ps->prev = NULL;
+        ps->next = NULL;
+        ps->is_enet = 0;
+        ps->clifd = 0;
+        ps->is_listener = 0;
+        *psock = ps;
+    } else {
+        ps->prev = *psock;
+        ps->next = (*psock)->next;
+        if(ps->next != NULL)
+            (ps->next)->prev = ps;
+        (*psock)->next = ps;
+    }
 }
 
 
-void deletePollSock(struct POLLsock **psock, int clifd){ 
+void deletePollSock(struct POLLsock **psock){ 
     struct POLLsock *ps, *prev, *next;
     ps = (*psock);
-    while(ps != NULL){
-        next = ps->next;
-        prev = ps->prev;
-        if(ps->clifd == clifd){
-            if(next != NULL){
-                next->prev = prev;
-            }
-            if(prev != NULL){
-                prev->next = next;
-            }
-            if(prev == NULL){
-                (*psock) = next;
-            }
-            free(ps);
-            break;
-        }
-        ps = ps->next;
+    next = (*psock)->next;
+    prev = (*psock)->prev;
+    printf("prevfd %d, nextfd %d\n",prev->clifd,next->clifd);
+    prev->next = next;
+    if(next != NULL){
+        next->prev = prev;
+    } else {
+
+        printf("NULLLLLLLLL\n");
     }
-    close(clifd);
+    printf("prevfd %d, curfd %d, nextfd %d\n",prev->clifd,ps->clifd,next->clifd);
+    epoll_ctl(epfd, EPOLL_CTL_DEL, ps->clifd, &ev);
+    close(ps->clifd);
+    free(ps);
 }
 
 
@@ -138,7 +154,7 @@ void setupIPCserver(struct POLLsock **psock){ /* function to open listening ipc 
     struct sockaddr_un local;
     
     addPollSock(psock);
-    ps = (*psock);
+    ps = (*psock)->next;
     ps->portNum = -1;
     ps->is_enet = 0;
     ps->is_listener = 1;
@@ -175,7 +191,7 @@ void acceptIPCconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* func
     memset(&remote,0,sizeof(struct sockaddr_un));
 
     addPollSock(psock);
-    ps = (*psock);
+    ps = (*psock)->next;
     ps->portNum = IPC_COMMPORT;
     ps->is_enet = 0;
     ps->is_listener = 0;
@@ -196,7 +212,7 @@ void setupENETserver(struct POLLsock **psock){ /* function to set up ethernet so
     int n;
     for(n=0;n<MAX_PORTS;n++){
         addPollSock(psock);
-        ps = (*psock);
+        ps = (*psock)->next;
         ps->is_enet = 1;
         ps->is_listener = 1;
         ps->portNum = INIT_PORT + n;
@@ -240,7 +256,7 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* fun
     clilen = sizeof(client);
     
     addPollSock(psock);
-    ps = (*psock);
+    ps = (*psock)->next;
     ps->clifd = accept(tmp->clifd, (struct sockaddr *)&client, &clilen);
     ps->portNum = tmp->portNum;
     ps->is_enet = 1;
@@ -248,7 +264,11 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* fun
     setnonblocking(ps->clifd);
     
     ev.data.ptr = ps;
-    ev.events = EPOLLIN;
+    if(ps->portNum == ENET_COMMPORT){
+        ev.events = EPOLLIN;
+    } else {
+        ev.events = EPOLLIN | EPOLLET;
+    }
     epoll_ctl(epfd, EPOLL_CTL_ADD, ps->clifd, &ev);
     setsockopt(ps->clifd, IPPROTO_TCP, TCP_NODELAY, &ONE, sizeof(int));
     
@@ -371,6 +391,44 @@ void resetFPGAdataAcqParams(){ /* function to reset data acquisition variables o
 }
 
 
+void *readtask(void *args){
+    int nrecv;
+    struct POLLsock *ps;
+
+    while(1){
+        pthread_mutex_lock(&r_mutex);
+        while(readhead == NULL)
+            pthread_cond_wait(&r_condl,&r_mutex);
+
+        ps = (struct POLLsock *)readhead->data.ptr;
+
+        struct task* tmp = readhead;
+        readhead = readhead->next;
+        free(tmp);
+
+        pthread_mutex_unlock(&r_mutex);
+
+        nrecv = recv(ps->clifd,(ps->data_addr+ps->p_idx),g_packetsize*8*sizeof(uint8_t),0);
+        
+        if (nrecv > 0){
+            setsockopt(ps->clifd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
+            ps->p_idx += nrecv; 
+        } else {
+            if (nrecv == -1) perror("data recv error: ");
+            printf("deleting,%d,%d\n",ps->clifd,ps->boardNum);
+        pthread_mutex_lock(&r_mutex);
+            deletePollSock(&ps);
+        pthread_mutex_unlock(&r_mutex);
+            printf("passed\n");
+        }
+
+        pthread_mutex_lock(&r_mutex);
+        g_recvCount+=nrecv;
+        pthread_mutex_unlock(&r_mutex);
+    }
+}
+
+
 int main(int argc, char *argv[]) { printf("into main!\n");
 	
     resetGlobalVars();                                                  /* sets all the global variables to their defualt values */
@@ -381,10 +439,18 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     epfd = epoll_create(MAX_SOCKETS);
 
     struct POLLsock *psock = NULL;
+    addPollSock(&psock);
     setupIPCserver(&psock);                                                 /* calls function to listen for incoming ipc connections from (python) */
     setupENETserver(&psock);
     struct POLLsock *ps;
-    
+
+    pthread_t tid1,tid2;
+    struct task *new_task = NULL;
+    pthread_mutex_init(&r_mutex,NULL);
+    pthread_cond_init(&r_condl,NULL);
+    pthread_create(&tid1, NULL, readtask, NULL);
+    pthread_create(&tid2, NULL, readtask, NULL);
+
     int ipcCommFd = 0;
     struct FIFOmsg fmsg;                                                /* creates messaging variable to carry ipc messages */
 
@@ -405,12 +471,22 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     timeout_ms = 1000;
     while(runner == 1){
         /* polls the fds in readfds for readable data, returns number of fds with data (nready), returns '0' if it times out. */
+        ps = psock;
+        while(ps->next!=NULL){
+            //printf("clifd %d, is_enet %d, is_listener %d, boardNum %d, portNum %d\n",ps->clifd,ps->is_enet,ps->is_listener,ps->boardNum,ps->portNum);
+            ps = ps->next;
+        }
+        while(ps!=NULL){
+            printf("clifd %d, is_enet %d, is_listener %d, boardNum %d, portNum %d\n",ps->clifd,ps->is_enet,ps->is_listener,ps->boardNum,ps->portNum);
+            ps = ps->prev;
+        }
+        printf("psock clifd %d, is_enet %d, is_listener %d, boardNum %d, portNum %d\n",psock->clifd,psock->is_enet,psock->is_listener,psock->boardNum,psock->portNum);
         nfds = epoll_wait(epfd, events, MAX_SOCKETS, timeout_ms);          
 		
         if( nfds > 0 ){
             for(n = 0; n < nfds; n++){
-
                 ps = (struct POLLsock *)events[n].data.ptr;
+                //printf("clifd %d, is_enet %d, is_listener %d, boardNum %d, portNum %d\n",ps->clifd,ps->is_enet,ps->is_listener,ps->boardNum,ps->portNum);
                 if(!ps->is_enet){
                     if( ps->is_listener ){
                         acceptIPCconnection(&psock,ps);
@@ -431,7 +507,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             break;  /* error condition 'breaks' out of the while loop and shuts down server */
 
                         } else if(nrecv == 0){
-                            deletePollSock(&psock,ps->clifd);
+                            deletePollSock(&ps);
 
                         } else {
                             switch(fmsg.msg[0]){ /* msg[0] contains the command code for the message */
@@ -728,19 +804,22 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         updateBoardInfo(&psock);
                     
                     } else if ( events[n].events & EPOLLIN ){
-                        nrecv = recv(ps->clifd,(ps->data_addr+ps->p_idx),g_packetsize*8*sizeof(uint8_t),0);
-						
-                        if (nrecv > 0){
-                            setsockopt(ps->clifd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
-                            recvCount += nrecv;
-                            ps->p_idx += nrecv; 
+                        new_task = malloc(sizeof(struct task));
+                        new_task->data.ptr = ps;
+                        new_task->next = NULL;
+                        pthread_mutex_lock(&r_mutex);
+                        if(readhead == NULL){
+                            readhead = new_task;
+                            readtail = new_task;
                         } else {
-                            if (nrecv == -1) perror("data recv error: ");
-                            deletePollSock(&psock,ps->clifd);
+                            readtail->next = new_task;
+                            readtail = new_task;
                         }
-                        
+                        pthread_cond_broadcast(&r_condl);
+                        pthread_mutex_unlock(&r_mutex);
+
                         /* if all data has been collected by cServer, let the python UI know so it can move on with the program */
-                        if( recvCount == g_recLen*8*sizeof(uint8_t)*g_numBoards ){
+                        if( g_recvCount == g_recLen*8*sizeof(uint8_t)*g_numBoards ){
 							printf("send\n");
                             if(send(ipcCommFd,&n,sizeof(int),0) == -1){
                                 perror("IPC send failed, recvCount notification: ");
