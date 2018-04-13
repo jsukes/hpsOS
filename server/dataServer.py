@@ -1,12 +1,12 @@
 
 
-
 import socket
 import struct
 import time
 import select
 import numpy as np
 from dataServerParamConfig import *
+import sysv_ipc
 
 
 class dataServer():
@@ -123,7 +123,21 @@ class dataServer():
 		msg = struct.pack(self.cmsg,10,0,0,0,fname)
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
+	
+	def readData(self):
 		
+		msg = struct.pack(self.cmsg,12,0,0,0,"")
+		self.ipcsock.send(msg)
+		self.ipcWait()
+		
+		# Create a shared memory object
+		memory = sysv_ipc.SharedMemory(self.shmkey)
+		
+		# Read value from shared memory
+		memory_value = memory.read()#[:-1]
+		
+		return memory_value
+  	
 	def getData(self):
 		# this function tells the cServer to transfer the array it is storing the data in directly to the python server for the user to do with what they want. this function returns a binary array containing the data to the user. 
 		if (self.boardCount > 0):
@@ -213,7 +227,7 @@ class dataServer():
 		self.IPCSOCK = "./lithium_ipc"	# name of the ipc socket to connect to the cServer through
 		#~ self.IPCFIFO = "data_pipe"		# name of the FIFO to connect to the cServer through
 		self.cmsg = '4I100s'			# tells python how to package messages to send to the cServer -> [4*(unsinged 32-bit int), string (up to 100 characters)]
-		
+		self.shmkey = 1234
 		# default values of data acquisition variables
 		self.trigDelay = 0
 		self.da = 0

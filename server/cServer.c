@@ -13,6 +13,8 @@
 #include <sys/stat.h>
 #include <errno.h> // unused
 #include <sys/time.h> // unused
+#include <sys/ipc.h>
+#include <sys/shm.h>
 extern int errno;
 
 //TESTING GIT PUSHES
@@ -28,6 +30,7 @@ extern int errno;
 #define MIN_PACKETSIZE 128
 #define IPC_COMMPORT 0
 #define ENET_COMMPORT INIT_PORT
+#define IPC_SHARED_MEM_KEY 1234
 
 #define CASE_SET_TRIGGER_DELAY 0
 #define CASE_SET_RECORD_LENGTH 1
@@ -60,8 +63,11 @@ unsigned long g_concurrentSenders;
 uint32_t g_connectedBoards[MAX_FPGAS+1];
 uint32_t g_numBoards, g_portMax, g_numPorts;
 
+int g_ipcCommFd;
 int g_enetCommFd[MAX_FPGAS+1] = {0};
 int g_enetBoardIdx[MAX_FPGAS+1] = {0};
+
+key_t g_shmkey = IPC_SHARED_MEM_KEY;
 
 int epfd;
 struct epoll_event ev;
@@ -186,6 +192,7 @@ void acceptIPCconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* func
     ev.events = EPOLLIN;
     epoll_ctl(epfd,EPOLL_CTL_ADD,ps->clifd,&ev);
     printf("IPC socket accepted %d\n",ps->clifd);
+    g_ipcCommFd = ps->clifd;
 }
 
 
@@ -297,9 +304,7 @@ void resetGlobalVars(){ /* function to reset all global variables, global variab
 
 
 void setDataAddrPointers(struct POLLsock **psock, uint8_t **data){
-    /* i think this function modifies psock, so that by the end its always pointing to the last element. gotta test that */
-    g_numBoards = 0;
-    struct POLLsock* ps;
+    struct POLLsock *ps;
     ps = (*psock);
     uint8_t* dtmp;
     unsigned long pulseIdx;
@@ -327,12 +332,13 @@ void setDataAddrPointers(struct POLLsock **psock, uint8_t **data){
 
 void updateBoardInfo(struct POLLsock **psock){
     int l,k;
-    struct POLLsock *ps;
-    ps = (*psock);
+    struct POLLsock *ps,*ps0;
     int enetCommFd[MAX_FPGAS+1] = {0};
     g_portMax = 0;
     g_numBoards = 0;
 
+    ps0 = (*psock);
+    ps = (*psock);
     while( ps!=NULL ){
         if( ps->is_enet && !ps->is_listener && ps->portNum != ENET_COMMPORT ){
             g_portMax = (ps->portNum > g_portMax) ? ps->portNum : g_portMax;    
@@ -353,6 +359,7 @@ void updateBoardInfo(struct POLLsock **psock){
             l++;
         }
     }
+    (*psock) = ps0;
 }
 
 
@@ -374,6 +381,42 @@ void resetFPGAdataAcqParams(){ /* function to reset data acquisition variables o
 }
 
 
+int sendDataShm(uint8_t *data) {
+    // Save the size of the data, to be passed with the data to the Python UI
+    int data_size = sizeof(uint8_t)*g_numBoards*g_idx1len*g_idx2len*g_idx3len*8*g_recLen;
+
+    // Define objects to hold the shared memory id and key,
+    // and a pointer to later access the shared memory
+    int shmid;
+    char *shared_memory;
+    // Create a shared memory segment of size: data_size and obtain its shared memory id
+    if((shmid = shmget(g_shmkey, data_size, IPC_CREAT | 0660)) < 0) {
+        printf("Error getting shared memory id\n");
+        return -1;
+    }
+
+    // Make shared_memory point to the newly created shared memory segment
+    if((shared_memory = shmat(shmid, NULL, 0)) == (char *) -1) {
+        printf("Error attaching shared memory\n");
+        return -1;
+    }
+
+    // copy the data array into shared memory
+    memcpy(shared_memory, data, data_size);
+
+    // let python know the data is ready
+    if(send(g_ipcCommFd,&shmid,sizeof(int),0) == -1){
+        perror("IPC send failed, recvCount notification: ");
+        exit(1);
+    }
+
+    //Detach and remove shared memory
+    shmdt(shared_memory);
+    shmctl(shmid, IPC_RMID, NULL);
+    return 0;
+}
+
+
 int main(int argc, char *argv[]) { printf("into main!\n");
 	
     resetGlobalVars();                                                  /* sets all the global variables to their defualt values */
@@ -384,11 +427,12 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     epfd = epoll_create(MAX_SOCKETS);
 
     struct POLLsock *psock = NULL;
+    struct POLLsock *ps,*ps_tmp;
+    addPollSock(&psock);
+
     setupIPCserver(&psock);                                                 /* calls function to listen for incoming ipc connections from (python) */
     setupENETserver(&psock);
-    struct POLLsock *ps;
     
-    int ipcCommFd = 0;
     struct FIFOmsg fmsg;                                                /* creates messaging variable to carry ipc messages */
 
     uint8_t *data;                                                      /* array to store acquired data */
@@ -397,7 +441,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 
     int k,l,m,n;
     int dataAcqGo;                                                      /* flag to put SoC in state to acquire data or not */
-    int nfds,nrecv,recvCount;                                         /* number of fds ready, number of bytes recv'd per read, sum of nrecv'd */
+    int nfds,nrecv,recvCount,nsent;                                         /* number of fds ready, number of bytes recv'd per read, sum of nrecv'd */
     int runner;                                                         /* flag to run the server, closes program if set to 0 */
     int timeout_ms;
     
@@ -409,7 +453,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     while(runner == 1){
         /* polls the fds in readfds for readable data, returns number of fds with data (nready), returns '0' if it times out. */
         nfds = epoll_wait(epfd, events, MAX_SOCKETS, timeout_ms);          
-		
+	    //printf("nfds: %d\n",nfds);	
         if( nfds > 0 ){
             for(n = 0; n < nfds; n++){
 
@@ -492,7 +536,6 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                     } else {
                                         printf("invalid recLen, reseting global variables\n"); 
                                         resetGlobalVars();
-                                        k = 0;
                                         resetFPGAdataAcqParams();
                                         data = (uint8_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t));
                                         printf("global variables reset to defaults\n");
@@ -613,7 +656,6 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                         all variables in fmsg are unused.    
                                     */
                                     resetGlobalVars();
-                                    k = 0;
                                     resetFPGAdataAcqParams();
                                     data = (uint8_t *)realloc(data,MAX_FPGAS*g_idx1len*g_idx2len*g_idx3len*g_recLen*sizeof(uint64_t));
                                     printf("global variables reset to defaults\n");
@@ -640,8 +682,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                         notes on variables in fmgs:
                                         - msg[1], msg[2], msg[3], and buff are unused    
                                     */
-                                    if(send(ps->clifd,data,sizeof(uint8_t)*g_numBoards*g_idx1len*g_idx2len*g_idx3len*8*g_recLen,0) == -1){
-                                        perror("IPC send failed\n");
+                                    if(sendDataShm(data) == -1){
+                                        perror("IPC send error");
                                         exit(1);
                                     }
                                     break;
@@ -732,7 +774,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                     
                     } else if ( events[n].events & EPOLLIN ){
                         nrecv = recv(ps->clifd,(ps->data_addr+ps->p_idx),g_packetsize*8*sizeof(uint8_t),0);
-						
+                        //printf("nrecv %d, board %d, %d\n",nrecv,ps->boardNum, ps->portNum);					
                         if (nrecv > 0){
                             setsockopt(ps->clifd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
                             recvCount += nrecv;
@@ -741,24 +783,26 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             if (nrecv == -1) perror("data recv error: ");
                             deletePollSock(&psock,ps->clifd);
                         }
-                        
+                        //printf("recvCount %d, %lu\n",recvCount, g_recLen*8*sizeof(uint8_t)*g_numBoards); 
                         /* if all data has been collected by cServer, let the python UI know so it can move on with the program */
                         if( recvCount == g_recLen*8*sizeof(uint8_t)*g_numBoards ){
-							printf("send\n");
-                            if(send(ipcCommFd,&n,sizeof(int),0) == -1){
+							//printf("send\n");
+                            if(send(g_ipcCommFd,&n,sizeof(int),0) == -1){
                                 perror("IPC send failed, recvCount notification: ");
                                 exit(1);
                             }
                             /* reset the sockets partial index variables */
-                            ps = psock;
-                            while(psock->next!=NULL){
-                                if((psock->is_enet) && (!psock->is_listener) && (psock->portNum != ENET_COMMPORT) ){
-                                    psock->p_idx=0;
-                                    psock->data_addr+=g_numBoards*8*g_recLen;
+                            ps_tmp = psock;
+                            while( ps_tmp != NULL ){
+                                //printf("boardNum %d, portNum %d\n",ps_tmp->boardNum, ps_tmp->portNum);
+                                if((ps_tmp->is_enet) && (!ps_tmp->is_listener) && (ps_tmp->portNum != ENET_COMMPORT) ){
+                                    //printf("pulse %d: boardNum %d, %d\n",k,ps_tmp->boardNum, ps_tmp->portNum);
+                                    ps_tmp->p_idx=0;
+                                    ps_tmp->data_addr+=g_numBoards*8*g_recLen;
                                 }
-                                psock = psock->next;
+                                ps_tmp = ps_tmp->next;
                             }
-                            psock = ps;
+                            k++;
                             recvCount = 0;
                         }
                     }
