@@ -262,6 +262,7 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* fun
     int n;
     int msg[4];
     n = recv(ps->clifd,&msg,4*sizeof(int),MSG_WAITALL);
+    usleep(100);
     ps->boardNum = msg[0];
     if(ps->portNum == ENET_COMMPORT){
         g_enetCommFd[ps->boardNum] = ps->clifd;
@@ -786,7 +787,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         //printf("recvCount %d, %lu\n",recvCount, g_recLen*8*sizeof(uint8_t)*g_numBoards); 
                         /* if all data has been collected by cServer, let the python UI know so it can move on with the program */
                         if( recvCount == g_recLen*8*sizeof(uint8_t)*g_numBoards ){
-							//printf("send\n");
+							printf("send\n");
                             if(send(g_ipcCommFd,&n,sizeof(int),0) == -1){
                                 perror("IPC send failed, recvCount notification: ");
                                 exit(1);
@@ -796,7 +797,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             while( ps_tmp != NULL ){
                                 //printf("boardNum %d, portNum %d\n",ps_tmp->boardNum, ps_tmp->portNum);
                                 if((ps_tmp->is_enet) && (!ps_tmp->is_listener) && (ps_tmp->portNum != ENET_COMMPORT) ){
-                                    //printf("pulse %d: boardNum %d, %d\n",k,ps_tmp->boardNum, ps_tmp->portNum);
+                                    printf("pulse %d: boardNum %d, %d\n",k,ps_tmp->boardNum, ps_tmp->portNum);
                                     ps_tmp->p_idx=0;
                                     ps_tmp->data_addr+=g_numBoards*8*g_recLen;
                                 }

@@ -146,8 +146,10 @@ void setupCOMMsock(struct ENETsock *ENET){ // connect to the cServer through eth
     int tmpmsg[4] = {0};
     tmpmsg[0] = ENET->boardNum;
     tmpmsg[1] = 0;
-    send(ENET->commfd, &tmpmsg, 4*sizeof(int), 0);
-    setsockopt(ENET->commfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+    usleep(10);
+    printf("comm sock send %d\n",send(ENET->commfd, &tmpmsg, 4*sizeof(int), 0));
+    
+    //~ setsockopt(ENET->commfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
     
     ENET->maxfd = ENET->commfd;
     for(tmpmsg[0]=0;ENET->sockfd[tmpmsg[0]]!=0;tmpmsg[0]++){
@@ -183,8 +185,11 @@ void setupDATAsock(struct ENETsock *ENET, int portNum){ // connect to the cServe
     int tmpmsg[4] = {0};
     tmpmsg[0] = ENET->boardNum;
     tmpmsg[1] = portNum;
-    send(ENET->sockfd[portNum-1], &tmpmsg, 4*sizeof(int), 0);
-    setsockopt(ENET->sockfd[portNum-1],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+    usleep(10);
+    
+    printf("data sock send %d\n",send(ENET->sockfd[portNum-1], &tmpmsg, 4*sizeof(int), 0));
+	
+    //~ setsockopt(ENET->sockfd[portNum-1],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
     
     ENET->maxfd = ENET->commfd;
     for(tmpmsg[0]=0;ENET->sockfd[tmpmsg[0]]!=0;tmpmsg[0]++){
