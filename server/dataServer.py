@@ -126,7 +126,7 @@ class dataServer():
 	
 	def readData(self):
 		
-		msg = struct.pack(self.cmsg,12,0,0,0,"")
+		msg = struct.pack(self.cmsg,11,0,0,0,"")
 		self.ipcsock.send(msg)
 		self.ipcWait()
 		
@@ -134,64 +134,31 @@ class dataServer():
 		memory = sysv_ipc.SharedMemory(self.shmkey)
 		
 		# Read value from shared memory
-		memory_value = memory.read()#[:-1]
+		memory_value = memory.read()
 		
 		return memory_value
   	
 	def getData(self):
 		# this function tells the cServer to transfer the array it is storing the data in directly to the python server for the user to do with what they want. this function returns a binary array containing the data to the user. 
 		if (self.boardCount > 0):
-			msg = struct.pack(self.cmsg,12,0,0,0,"")
+			msg = struct.pack(self.cmsg,11,0,0,0,"")
 			self.ipcsock.send(msg)
 			return self.ipcsock.recv(2*self.recLen*self.l1*self.l2*self.l3*self.boardCount*np.dtype(np.uint32).itemsize,socket.MSG_WAITALL)
 		else:
 			print 'Invalid number of boards detected,returning single value \'0\' '
 			return 0
 	
-	def ipcWait(self,to=None):
-		# tells python to wait for confirmation from the cServer that all data has been received from the SoCs. used to synchronize transmit and receive systems
-		# 'to' is an optional timeout argument that tells python that if no data arrives within the specified timeout, to return the value '0' and continue the regular running of the program
-		if to != None:
-			nready = select.select([self.ipcsock], [], [], to)
-			if nready[0]:
-				#~ print 'yoyoyo'
-				return self.ipcsock.recv(4,socket.MSG_WAITALL)
-			else:
-				print 'ipcWait timed out'
-				return 0
-		else:
-			return self.ipcsock.recv(4,socket.MSG_WAITALL)
-	
-	def setConcurrentSenders(self,concSenders):
-		# sets the number of socs that can concurrently send data to the cServer
-		if concSenders >= 0 and concSenders <= self.getBoardCount():
-			self.concSenders = concSenders
-		else:
-			self.concSenders = 0
+	def queryBoardInfo(self):
+		msg = struct.pack(self.cmsg,12,0,0,0,"")
+		self.ipcsock.send(msg)
 			
-		msg = struct.pack(self.cmsg,13,self.concSenders,0,0,"")
-		self.ipcsock.send(msg)
-		
-	def getBoardCount(self):
-		# gets the number of boards connected to the cServer
-		msg = struct.pack(self.cmsg,14,0,0,0,"")
-		self.ipcsock.send(msg)
-		self.boardCount = struct.Struct('=I').unpack(self.ipcsock.recv(4,socket.MSG_WAITALL))[0]
-		return self.boardCount
-	
-	def getBoardNums(self):
+	def getBoardInfo(self):
 		# gets the identifying numbers of the boards connected to the cServer 
 		
-		if self.boardCount == 0:
-			self.getBoardCount()
-			
-		if self.boardCount > 0:
-			msg = struct.pack(self.cmsg,15,0,0,0,"")
-			self.ipcsock.send(msg)
-			self.boardNums = np.array(struct.Struct('{}{}{}'.format('=',self.boardCount,'I')).unpack(self.ipcsock.recv(self.boardCount*4,socket.MSG_WAITALL)))
-		else:
-			self.boardNums = 0
-			print 'no boards are connected to the cServer'
+		msg = struct.pack(self.cmsg,13,0,0,0,"")
+		self.ipcsock.send(msg)
+		self.boardNums = np.array(struct.Struct('{}{}{}'.format('=64I')).unpack(self.ipcsock.recv(64*4,socket.MSG_WAITALL)))
+		self.boardCount = len(np.argwhere(self.boardNums>0))
 		
 		return self.boardNums
 	
@@ -221,6 +188,20 @@ class dataServer():
 		self.ipcsock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 		self.ipcsock.connect(self.IPCSOCK)
 	
+	def ipcWait(self,to=None):
+		# tells python to wait for confirmation from the cServer that all data has been received from the SoCs. used to synchronize transmit and receive systems
+		# 'to' is an optional timeout argument that tells python that if no data arrives within the specified timeout, to return the value '0' and continue the regular running of the program
+		if to != None:
+			nready = select.select([self.ipcsock], [], [], to)
+			if nready[0]:
+				#~ print 'yoyoyo'
+				return self.ipcsock.recv(4,socket.MSG_WAITALL)
+			else:
+				print 'ipcWait timed out'
+				return 0
+		else:
+			return self.ipcsock.recv(4,socket.MSG_WAITALL)
+				
 	def __init__(self):	
 		# class intialization for the python data server 
 		
@@ -239,7 +220,6 @@ class dataServer():
 		self.l1, self.l2, self.l3 = 1,1,1
 		self.boardCount = 0
 		self.boardNums = []
-		self.concSenders = 0
 		
 
 	

@@ -1,13 +1,23 @@
 
 
-struct ENETsock{ // structure to store ethernet variables
-    const char *serverIP;
-    const int boardNum;
-    int commfd;
-    int sockfd[MAX_DATA_PORTS];
-    int maxfd;
-	const char *server_addr;
-	struct sockaddr_in server_sockaddr;
+//~ struct ENETsock{ // structure to store ethernet variables
+    //~ const char *serverIP;
+    //~ const int boardNum;
+    //~ int commfd;
+    //~ int sockfd[MAX_DATA_PORTS];
+    //~ int maxfd;
+	//~ const char *server_addr;
+	//~ struct sockaddr_in server_sockaddr;
+//~ };
+
+struct ENETsock{
+	int sockfd;
+	int is_commsock;
+	int portNum;
+	uint8_t volatile *data_addr;
+	int dataLen;
+	struct ENETsock *next;
+	struct ENETsock *prev;	
 };
 
 
@@ -104,35 +114,61 @@ int FPGA_init(struct FPGAvars *FPGA){ // maps the FPGA hardware registers to the
 }
 
 
-void getBoardData(int argc, char *argv[], int *boardData){ // load the boards specific data from files stored on SoC
-		
+void getBoardData(){ // load the boards specific data from files stored on SoC		
 	char const* const fileName = "boardData";
     FILE* file = fopen(fileName, "r");
     char line[256];
 	int n=0;
 	
-    while(fgets(line, sizeof(line), file)){
-        boardData[n] = atoi(line);
+    while( fgets(line, sizeof(line), file) && n<4 ){
+        emsg[n] = atoi(line);
         n++;    
     }  
     fclose(file);
+    g_boardNum = emsg[0];
 }
 
 
-void setupCOMMsock(struct ENETsock *ENET){ // connect to the cServer through ethernet
+void addEnetSock(struct ENETsock **ENET, int portNum){
+	struct ENETsock* enet;	
+	enet = (struct ENETsock *)malloc(sizeof(struct ENETsock));
+	enet->next = *ENET;
+	enet->prev = NULL;
+	enet->portNum = portNum;
+	if(portNum == 0){
+		enet->is_commsock = 1;
+	} else {
+		enet->is_commsock = 0;
+	}
+	if(*ENET != NULL)
+		(*ENET)->prev = enet;
+	*ENET = enet;
+}
+
+
+void connectEnetSock(struct ENETsock **ENET, int portNum, fd_set *masterfds){
+	struct sockaddr_in server_sockaddr;	
 	struct timeval t0,t1;
 	int diff;
+	struct ENETsock *enet, *enet0;
+	g_maxfd = 0;
+	enet0 = *ENET;
+	enet = *ENET;
+	while(enet->prev != NULL){
+		enet = enet->prev;
+	}
+	while(enet->portNum != portNum){
+		g_maxfd = (g_maxfd > enet->sockfd) ? g_maxfd : enet->sockfd;
+		enet = enet->next;
+	}		
+	enet->sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    server_sockaddr.sin_port = htons(enet->portNum+INIT_PORT);
+    server_sockaddr.sin_family = AF_INET;
+    server_sockaddr.sin_addr.s_addr = inet_addr(g_serverIP);
     
-    ENET->server_addr = ENET->serverIP;	
-    ENET->commfd = socket(AF_INET, SOCK_STREAM, 0);
-    ENET->server_sockaddr.sin_port = htons(INIT_PORT);
-    ENET->server_sockaddr.sin_family = AF_INET;
-    ENET->server_sockaddr.sin_addr.s_addr = inet_addr(ENET->server_addr);
-    
-    gettimeofday(&t0,NULL);
-    
-    if(connect(ENET->commfd, (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){		
-        while(connect(ENET->commfd, (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){
+    gettimeofday(&t0,NULL); 
+    if(connect(enet->sockfd, (struct sockaddr *)&server_sockaddr, sizeof(server_sockaddr))  == -1){		
+        while(connect(enet->sockfd, (struct sockaddr *)&server_sockaddr, sizeof(server_sockaddr))  == -1){
             gettimeofday(&t1,NULL);
             diff = (t1.tv_sec-t0.tv_sec);
             if(diff>(600)){
@@ -140,86 +176,74 @@ void setupCOMMsock(struct ENETsock *ENET){ // connect to the cServer through eth
                 break;
             }	
         }
-    }
-    
-    setsockopt(ENET->commfd,IPPROTO_TCP,TCP_NODELAY,&ONE,sizeof(int));
-    int tmpmsg[4] = {0};
-    tmpmsg[0] = ENET->boardNum;
-    tmpmsg[1] = 0;
-    usleep(10);
-    printf("comm sock send %d\n",send(ENET->commfd, &tmpmsg, 4*sizeof(int), 0));
-    
-    //~ setsockopt(ENET->commfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
-    
-    ENET->maxfd = ENET->commfd;
-    for(tmpmsg[0]=0;ENET->sockfd[tmpmsg[0]]!=0;tmpmsg[0]++){
-        ENET->maxfd = (ENET->maxfd > ENET->sockfd[tmpmsg[0]]) ? ENET->maxfd : ENET->sockfd[tmpmsg[0]];
-    }
-    
-}
-
-
-void setupDATAsock(struct ENETsock *ENET, int portNum){ // connect to the cServer through ethernet
-	struct timeval t0,t1;
-	int diff;
-    ENET->server_addr = ENET->serverIP;	
-    ENET->sockfd[portNum-1] = socket(AF_INET, SOCK_STREAM, 0);
-    ENET->server_sockaddr.sin_port = htons(INIT_PORT+portNum);
-    ENET->server_sockaddr.sin_family = AF_INET;
-    ENET->server_sockaddr.sin_addr.s_addr = inet_addr(ENET->server_addr);
-    
-    gettimeofday(&t0,NULL);
-    
-    if(connect(ENET->sockfd[portNum-1], (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){		
-        while(connect(ENET->sockfd[portNum-1], (struct sockaddr *)&ENET->server_sockaddr, sizeof(ENET->server_sockaddr))  == -1){
-            gettimeofday(&t1,NULL);
-            diff = (t1.tv_sec-t0.tv_sec);
-            if(diff>(600)){
-                printf("NO CONNECT!!!!\n");
-                break;
-            }	
-        }
-    }
-    
-    setsockopt(ENET->sockfd[portNum-1],IPPROTO_TCP,TCP_NODELAY,&ONE,sizeof(int));
-    int tmpmsg[4] = {0};
-    tmpmsg[0] = ENET->boardNum;
-    tmpmsg[1] = portNum;
-    usleep(10);
-    
-    printf("data sock send %d\n",send(ENET->sockfd[portNum-1], &tmpmsg, 4*sizeof(int), 0));
+    }  
+    setsockopt(enet->sockfd,IPPROTO_TCP,TCP_NODELAY,&ONE,sizeof(int));
+    setsockopt(enet->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+	FD_SET(enet->sockfd, masterfds);
 	
-    //~ setsockopt(ENET->sockfd[portNum-1],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
-    
-    ENET->maxfd = ENET->commfd;
-    for(tmpmsg[0]=0;ENET->sockfd[tmpmsg[0]]!=0;tmpmsg[0]++){
-        ENET->maxfd = (ENET->maxfd > ENET->sockfd[tmpmsg[0]]) ? ENET->maxfd : ENET->sockfd[tmpmsg[0]];
-    }
-    
+	while(enet != NULL){
+		g_maxfd = (g_maxfd > enet->sockfd) ? g_maxfd : enet->sockfd;
+		enet = enet->next;
+	}
+	*ENET = enet0;
 }
 
 
-void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENETsock *ENET){ // process that talks to the FPGA and transmits data to the SoCs
+void deleteEnetSock(struct ENETsock **ENET, int portNum, fd_set *masterfds){
+	
+	struct ENETsock *enet, *next, *prev;
+	
+	g_maxfd = 0;
+	enet = *ENET;
+	while(enet->prev != NULL){
+		enet = enet->prev;
+	}
+	while(enet->portNum != portNum){
+		g_maxfd = (g_maxfd > enet->sockfd) ? g_maxfd : enet->sockfd;
+		enet = enet->next;
+	}
+	next = enet->next;
+	prev = enet->prev;
+	if(next != NULL)
+		next->prev = prev;
+	if(prev != NULL)
+		prev->next = next;
+	if(prev == NULL)
+		(*ENET) = next;
+	
+	FD_CLR(enet->sockfd, masterfds);
+	free(enet);
+	
+	while(next != NULL){
+		g_maxfd = (g_maxfd > next->sockfd) ? g_maxfd : next->sockfd;
+		next = next->next;
+	}
+}
 
-	uint8_t *dtmp;
 
+void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, struct ENETsock *commsock){ // process that talks to the FPGA and transmits data to the SoCs
+
+	struct ENETsock *enet0, *enet2;
+	enet0 = *ENET;
+	
+	//~ uint8_t *dtmp;
 	int tmp = 0;
 	int n;
-    int nsent;	
+    int nsent,ntot;	
 				
-	switch(pipemsg[0]){
+	switch(enetmsg[0]){
 
 		case(CASE_TRIGDELAY):{ // change trig delay
-			DREF(FPGA->trigDelay) = 20*pipemsg[1];
+			DREF(FPGA->trigDelay) = 20*enetmsg[1];
 			printf("trig Delay set to %.2f\n",(float)DREF(FPGA->trigDelay)/20.0);
 			break;
 		}
 
 		case(CASE_RECLEN):{ // change record length
 			DREF(FPGA->transReady) = 0;
-			if(pipemsg[1]>=MIN_PACKETSIZE && pipemsg[1]<=MAX_RECLEN){
-				DREF(FPGA->recLen) = ( pipemsg[1] == MAX_RECLEN ) ? pipemsg[1]-1 : pipemsg[1];
-				g_recLen = pipemsg[1];
+			if(enetmsg[1]>=MIN_PACKETSIZE && enetmsg[1]<=MAX_RECLEN){
+				DREF(FPGA->recLen) = ( enetmsg[1] == MAX_RECLEN ) ? enetmsg[1]-1 : enetmsg[1];
+				g_recLen = enetmsg[1];
 				g_nDataPorts = (g_recLen-1)/g_packetsize+1;
 				printf("recLen set to %zu\n",DREF(FPGA->recLen));
 			} else {
@@ -229,38 +253,18 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 				g_nDataPorts = (g_recLen-1)/g_packetsize+1;
 				printf("invalid recLen, defaulting to 2048\n");
 			}
-            for(n=0;n<MAX_DATA_PORTS;n++){
-                if(n<g_nDataPorts && ENET->sockfd[n] == 0){
-                    setupDATAsock(ENET,n+1);
-                    g_updateFDSet = 1;
-                } else if (n>=g_nDataPorts && ENET->sockfd[n]!=0 ){
-                    close(ENET->sockfd[n]);
-                    ENET->sockfd[n] = 0;
-                    g_updateFDSet = 1;
-                }
-            }
 			break;
 		}
 
         case(CASE_SET_PACKETSIZE):{
 			DREF(FPGA->transReady) = 0;
-			if( pipemsg[1] >= MIN_PACKETSIZE && pipemsg[1] <= g_recLen ){
-                g_packetsize = pipemsg[1];
+			if( enetmsg[1] >= MIN_PACKETSIZE && enetmsg[1] <= g_recLen ){
+                g_packetsize = enetmsg[1];
 				g_nDataPorts = (g_recLen-1)/g_packetsize+1;
 				printf("packetsize set to %u\n",g_packetsize);
 			} else {
                 g_packetsize = g_recLen;
 				g_nDataPorts = (g_recLen-1)/g_packetsize+1;
-            }
-            for(n=0;n<MAX_DATA_PORTS;n++){
-                if(n<g_nDataPorts && ENET->sockfd[n] == 0){
-                    setupDATAsock(ENET,n+1);
-                    g_updateFDSet = 1;
-                } else if (n>=g_nDataPorts && ENET->sockfd[n]!=0 ){
-                    close(ENET->sockfd[n]);
-                    ENET->sockfd[n] = 0;
-                    g_updateFDSet = 1;
-                }
             }
             break;
         }
@@ -272,7 +276,7 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 		}
 
 		case(CASE_DATAGO):{ // if dataGo is zero it won't transmit data to server, basically a wait state
-			if(pipemsg[1] == 1){
+			if(enetmsg[1] == 1){
 				printf("dataAcqGo set to 1\n");
 			} else {
 				printf("dataAcqGo set to 0\n");
@@ -283,25 +287,36 @@ void FPGA_dataAcqController(uint32_t *pipemsg, struct FPGAvars *FPGA, struct ENE
 			break;
 		}
 
+		case(CASE_QUERY_BOARD_INFO):{// loads board-specific data from onboard file
+			getBoardData();
+			send(commsock->sockfd,emsg,4*sizeof(uint32_t),0)
+		}
+		
 		case(CASE_QUERY_DATA):{
 			while( !DREF(FPGA->transReady) && ++tmp<1000 ){
 				usleep(10);
 			}
 			
 			if( DREF(FPGA->transReady) ){
-				dtmp = DREFP(FPGA->onchip1);
-                nsent = 0;
-				for(n=0;ENET->sockfd[n]!=0;n++){
-					if( ( n == (g_nDataPorts-1) ) && ( g_recLen%g_packetsize > 0 ) ){
-						nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],(g_recLen%g_packetsize)*8*sizeof(uint8_t),0);
-                        //printf("sending data mod,%d,%d\n",nsent,ENET->sockfd[n]);
-					} else {
-                        nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],g_packetsize*8*sizeof(uint8_t),0);
-                        //printf("sending data no mod,%d,%d\n",nsent,ENET->sockfd[n]);
-					}
-                    if ( nsent == -1 ) perror("error sending data:");
-					setsockopt(ENET->sockfd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+				enet2 = commsock->prev;
+				//~ dtmp = DREFP(FPGA->onchip1);
+                //~ nsent = 0;
+                while(enet2 != NULL){
+					nsent = send(enet2->sockfd,enet2->data_addr,enet2->dataLen*8*sizeof(uint8_t),0);	
+					if( nsent < 0 )
+						perror("error sending data:")
+					setsockopt(enet2->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+					enet2 = enet2->prev;
 				}
+				//~ for(n=0;ENET->sockfd[n]!=0;n++){
+					//~ if( ( n == (g_nDataPorts-1) ) && ( g_recLen%g_packetsize > 0 ) ){
+						//~ nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],(g_recLen%g_packetsize)*8*sizeof(uint8_t),0);
+					//~ } else {
+                        //~ nsent = send(ENET->sockfd[n],&dtmp[8*n*g_packetsize],g_packetsize*8*sizeof(uint8_t),0);
+					//~ }
+                    //~ if ( nsent == -1 ) perror("error sending data:");
+					//~ setsockopt(ENET->sockfd[n],IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+				//~ }
 			}
 
 			DREF(FPGA->stateReset) = 1; 

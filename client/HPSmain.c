@@ -62,22 +62,29 @@
 #define CASE_SET_PACKETSIZE 2
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
+#define CASE_QUERY_BOARD_INFO 12
 #define CASE_QUERY_DATA 16
 #define CASE_KILLPROGRAM 17
 
 #define MAX_DATA_PORTS 64
 #define PACKET_WIDTH 512
 #define MAX_RECLEN 8192
-#define MIN_PACKETSIZE ( MAX_RECLEN/MAX_DATA_PORTS ) 
+#define MIN_PACKETSIZE ( MAX_RECLEN/MAX_DATA_PORTS )
+#define COMM_PORT 0
 
 int RUN_MAIN = 1;
 const int ONE = 1;
 const int ZERO = 0;	
 
 uint32_t g_recLen;
+uint32_t enetmsg[4] = {0}; // messaging variable to handle messages from cServer
+uint32_t emsg[4] = {0};
+
+uint32_t g_boardNum;
 int g_nDataPorts;
 int g_packetsize;
-int g_updateFDSet;
+int g_maxfd;
+const char *g_serverIP;
 // load user defined functions 
 #include "client_funcs.h"
 
@@ -86,93 +93,69 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	g_recLen = 2048;
     g_packetsize = 512;
 	g_nDataPorts = (g_recLen-1)/g_packetsize+1;
-
+	g_serverIP=argv[1];
+	
 	struct FPGAvars FPGA;
 	FPGA_init(&FPGA);
 	
-	uint32_t enetmsg[4] = {0}; // messaging variable to handle messages from cServer
-    
-	// loads board-specific data from onboard file
-    int boardData[3];
-	getBoardData(argc,argv,boardData); 
-	
 	// create ethernet socket to communicate with server and establish connection
-	struct ENETsock ENET = {.serverIP=argv[1],.boardNum=boardData[0]};
-	setupCOMMsock(&ENET);
-    for(enetmsg[0]=1;enetmsg[0]<=g_nDataPorts;enetmsg[0]++){
-        setupDATAsock(&ENET,enetmsg[0]);
-    }
-    enetmsg[0] = 0;
-    
+	struct ENETsock *ENET = NULL;
+	struct ENETsock *enet;
+	
 	// declare and initialize variables for the select loop
 	int n;
 	int nready,nrecv;
 	fd_set masterfds;
     fd_set readfds;
+	FD_ZERO(&masterfds);
 	
-	struct timeval tv;
-	
-    g_updateFDSet = 1;
-	while(RUN_MAIN == 1){
-	    tv.tv_sec = 0;
-	    tv.tv_usec = 10000;
-        if(g_updateFDSet){
-		    FD_ZERO(&readfds);
-            FD_ZERO(&masterfds);
-            FD_SET(ENET.commfd,&masterfds);
-            ENET.maxfd = ENET.commfd;
-            g_nDataPorts = 0;
-            for(n=0;n<MAX_DATA_PORTS;n++){
-                if( ENET.sockfd[n]!=0 ){
-                    FD_SET(ENET.sockfd[n],&masterfds);
-                    ENET.maxfd = (ENET.maxfd>ENET.sockfd[n]) ? ENET.maxfd : ENET.sockfd[n];
-                    g_nDataPorts++;
-                }
-		    }
-            g_updateFDSet = 0;
-            readfds = masterfds;
-        } else {
-            readfds = masterfds;
-        }
+	addEnetSock(&ENET, COMM_PORT);
+	connectEnetSock(&ENET, COMM_PORT, &masterfds);
 
-		nready = select(ENET.maxfd+1, &readfds, NULL, NULL, &tv);
+	struct timeval tv;
+	while(RUN_MAIN == 1){
+		tv.tv_sec = 0;
+		tv.tv_usec = 10000;
+		
+		FD_ZERO(&readfds);
+		readfds = masterfds;
+        
+		nready = select(g_maxfd+1, &readfds, NULL, NULL, &tv);
+		enet = *ENET;
 		
 		if( nready > 0 ){
-			if( FD_ISSET( ENET.commfd, &readfds ) ){ // incoming message from cServer
-				nrecv = recv(ENET.commfd, &enetmsg,4*sizeof(uint32_t),0);	
-                setsockopt(ENET.commfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));	
-                if( nrecv == 0 ){
-					RUN_MAIN = 0;
-					enetmsg[0] = 8;
-				}
-				
-                if( enetmsg[0]<CASE_KILLPROGRAM ){ // if message doesn't shutdown the SoC, forward message to child process
-                    FPGA_dataAcqController(enetmsg,&FPGA,&ENET);
-				} else { 
-					RUN_MAIN = 0;
-				}
+			while( enet != NULL ){
+				if( FD_ISSET( enet->sockfd, &readfds ) ){ // incoming message from cServer
+					if( enet->is_commsock ){
+						nrecv = recv(enet->sockfd, &enetmsg,4*sizeof(uint32_t),0);	
+						setsockopt(enet->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));	
+						if( nrecv == 0 ){
+							RUN_MAIN = 0;
+							enetmsg[0] = 8;
+						}
+						
+						if( enetmsg[0]<CASE_KILLPROGRAM ){ // if message doesn't shutdown the SoC, forward message to child process
+							FPGA_dataAcqController(&FPGA,&ENET,enet);
+						} else { 
+							RUN_MAIN = 0;
+						}
 
+					} else { 
+						nrecv = recv(enet->sockfd, &enetmsg,4*sizeof(uint32_t),0);
+	                    if(nrecv == 0){
+	                        deleteEnetSock(&ENET, enet->portNum, &masterfds);
+	                    } else if (nrecv == -1){
+	                        perror("recv being dumb\n");
+	                    } else {
+	                        printf("illegal recv (n = %d) on port %d, msg = [%lu, %lu, %lu, %lu]\n, shutting down client\n",nrecv,n,(unsigned long)enetmsg[0],(unsigned long)enetmsg[1],(unsigned long)enetmsg[2],(unsigned long)enetmsg[3]);
+	                        RUN_MAIN = 0;
+	                    }
+					}
+				}
+				enet = enet->next; 
 			}
-
-            for(n=0;n<MAX_DATA_PORTS;n++){
-                if( ENET.sockfd[n]!=0 && FD_ISSET(ENET.sockfd[n],&readfds) ){
-                    nrecv = recv(ENET.sockfd[n], &enetmsg,4*sizeof(uint32_t),0);
-                    if(nrecv == 0){
-                        close(ENET.sockfd[n]);
-                        FD_CLR(ENET.sockfd[n],&masterfds);
-                        if(ENET.sockfd[n] == ENET.maxfd) g_updateFDSet = 1;
-                        ENET.sockfd[n] = 0;
-                    } else if (nrecv == -1){
-                        perror("recv being dumb\n");
-                    } else {
-                        printf("illegal recv (n = %d) on port %d, msg = [%lu, %lu, %lu, %lu]\n, shutting down client\n",nrecv,n,(unsigned long)enetmsg[0],(unsigned long)enetmsg[1],(unsigned long)enetmsg[2],(unsigned long)enetmsg[3]);
-                        RUN_MAIN = 0;
-                    }
-                }
-            }
 		}
 	}
-
     close(ENET.commfd);
 	for(n=0;n<MAX_DATA_PORTS;n++)
 		close(ENET.sockfd[n]); 
