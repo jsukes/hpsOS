@@ -66,10 +66,10 @@
 #define CASE_QUERY_DATA 16
 #define CASE_KILLPROGRAM 17
 
-#define MAX_DATA_PORTS 64
-#define PACKET_WIDTH 512
-#define MAX_RECLEN 8192
-#define MIN_PACKETSIZE ( MAX_RECLEN/MAX_DATA_PORTS )
+#define MSG_QUERY_TIMEOUT 16
+
+#define MAX_RECLEN 8191
+#define MIN_PACKETSIZE 128
 #define COMM_PORT 0
 
 int RUN_MAIN = 1;
@@ -77,12 +77,16 @@ const int ONE = 1;
 const int ZERO = 0;	
 
 uint32_t g_recLen;
+uint32_t g_packetsize;
+
 uint32_t enetmsg[4] = {0}; // messaging variable to handle messages from cServer
-uint32_t emsg[4] = {0};
+uint32_t emsg[4] = {0}; // messaging variable to send to messages to cServer
+uint32_t g_boardData[4] = {0};
 
 uint32_t g_boardNum;
-int g_nDataPorts;
-int g_packetsize;
+
+int g_dataAcqGo=0;
+int g_numPorts=0;
 int g_maxfd;
 const char *g_serverIP;
 // load user defined functions 
@@ -92,7 +96,7 @@ const char *g_serverIP;
 int main(int argc, char *argv[]) { printf("into main!\n");
 	g_recLen = 2048;
     g_packetsize = 512;
-	g_nDataPorts = (g_recLen-1)/g_packetsize+1;
+	g_numPorts = (g_recLen-1)/g_packetsize+1;
 	g_serverIP=argv[1];
 	
 	struct FPGAvars FPGA;
@@ -121,45 +125,51 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 		readfds = masterfds;
         
 		nready = select(g_maxfd+1, &readfds, NULL, NULL, &tv);
-		enet = *ENET;
+		enet = ENET->commsock;
 		
 		if( nready > 0 ){
-			while( enet != NULL ){
+            n = 0;
+			while( enet!= NULL && enet->portNum <= g_numPorts ){
 				if( FD_ISSET( enet->sockfd, &readfds ) ){ // incoming message from cServer
-					if( enet->is_commsock ){
-						nrecv = recv(enet->sockfd, &enetmsg,4*sizeof(uint32_t),0);	
+				    n++;
+                    if( enet->is_commsock ){
+						nrecv = recv(enet->sockfd,&enetmsg,4*sizeof(uint32_t),0);	
 						setsockopt(enet->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));	
 						if( nrecv == 0 ){
 							RUN_MAIN = 0;
-							enetmsg[0] = 8;
 						}
 						
-						if( enetmsg[0]<CASE_KILLPROGRAM ){ // if message doesn't shutdown the SoC, forward message to child process
-							FPGA_dataAcqController(&FPGA,&ENET,enet);
+						if( enetmsg[0]<CASE_KILLPROGRAM && enetmsg[0] != CASE_CLOSE_PROGRAM ){ // if message doesn't shutdown the SoC, forward message to child process
+							FPGA_dataAcqController(&FPGA, &ENET, &masterfds);
 						} else { 
 							RUN_MAIN = 0;
 						}
 
 					} else { 
-						nrecv = recv(enet->sockfd, &enetmsg,4*sizeof(uint32_t),0);
+						nrecv = recv(enet->sockfd,&enetmsg,4*sizeof(uint32_t),0);
 	                    if(nrecv == 0){
-	                        deleteEnetSock(&ENET, enet->portNum, &masterfds);
+	                        disconnectEnetSock(&ENET, enet->portNum, &masterfds);
 	                    } else if (nrecv == -1){
 	                        perror("recv being dumb\n");
 	                    } else {
-	                        printf("illegal recv (n = %d) on port %d, msg = [%lu, %lu, %lu, %lu]\n, shutting down client\n",nrecv,n,(unsigned long)enetmsg[0],(unsigned long)enetmsg[1],(unsigned long)enetmsg[2],(unsigned long)enetmsg[3]);
+	                        printf("illegal recv (n = %d) on port %d, msg = [%lu, %lu, %lu, %lu]\n, shutting down client\n",nrecv,enet->portNum,(unsigned long)enetmsg[0],(unsigned long)enetmsg[1],(unsigned long)enetmsg[2],(unsigned long)enetmsg[3]);
 	                        RUN_MAIN = 0;
 	                    }
 					}
 				}
-				enet = enet->next; 
+                if( n == nready )
+                    break;
+				enet = enet->prev; 
 			}
 		}
 	}
-    close(ENET.commfd);
-	for(n=0;n<MAX_DATA_PORTS;n++)
-		close(ENET.sockfd[n]); 
-	FPGAclose(&FPGA);
+    
+    while( ENET != NULL ){
+        enet = ENET;
+        ENET = enet->next;
+        free(enet);
+    }
+    FPGAclose(&FPGA);
 	sleep(1);
     return( 0 );
 }

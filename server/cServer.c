@@ -207,7 +207,7 @@ void setupENETserver(struct POLLsock **psock){ /* function to set up ethernet so
         ps = (*psock);
         ps->is_enet = 1;
         ps->is_listener = 1;
-        ps->ipaddr = 0;
+        ps->ipAddr = 0;
         ps->portNum = INIT_PORT + n;
 		ps->clifd = socket(AF_INET, SOCK_STREAM, 0);
         setnonblocking(ps->clifd);
@@ -241,6 +241,8 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* fun
         - The first thing the clients do after connecting to the server is send a message containing the number identifying the board.
         - The socket recv's this message into 'enetmsg' and stores the value in the array of board numbers (ENET->board)
     */
+    char *ipaddr;
+    char *ipfields[4];
     struct POLLsock *ps;
     struct sockaddr_in client, peername;
     socklen_t clilen, peerlen;
@@ -259,8 +261,8 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* fun
         perror("ERROR getting peername");
     } else {
         int i;
-        char *ipaddr = strtok(inet_ntoa(peername.sin_addr),".");
-        char *ipfields[4];
+        ipaddr = strtok(inet_ntoa(peername.sin_addr),".");
+        
         for(i=0;i<4;i++){
             ipfields[i] = ipaddr;
             ipaddr = strtok(NULL,".");
@@ -782,7 +784,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             setsockopt(ps->clifd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
                             ps->boardNum = emsg[0];
                             g_enetCommFd[ps->boardNum] = ps->clifd;
-                            updatePsockField_boardNum(&psock, ps->ipAddr, ps->boardNum)
+                            updatePsockField_boardNum(&psock, ps->ipAddr, ps->boardNum);
                             printf("connected to board %d, port %d\n",ps->boardNum,ps->portNum);
                         } else {
                             if( dummy == -1 )

@@ -154,9 +154,12 @@ class dataServer():
 			
 	def getBoardInfo(self):
 		# gets the identifying numbers of the boards connected to the cServer 
-		
-		msg = struct.pack(self.cmsg,13,0,0,0,"")
+		msg = struct.pack(self.cmsg,12,0,0,0,"")
 		self.ipcsock.send(msg)
+		
+		msg = struct.pack(self.cmsg,13,1,0,0,"")
+		self.ipcsock.send(msg)
+		self.ipcWait()
 		self.boardNums = np.array(struct.Struct('{}{}{}'.format('=64I')).unpack(self.ipcsock.recv(64*4,socket.MSG_WAITALL)))
 		self.boardCount = len(np.argwhere(self.boardNums>0))
 		
