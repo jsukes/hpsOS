@@ -19,8 +19,8 @@ for ipAddr in $IPS; do
 			#~ if [ "$tmp" -lt 131 ]; then
 				#dummy=$(ssh-keygen -R $ipAddr)
 	            #dummy=$(ssh-keyscan -H $ipAddr >> ~/.ssh/known_hosts)
-	            echo "killall *HPS & sysctl -w net.ipv4.tcp_timestamp=1 & sysctl -w net.ipv4.tcp_sack=1 & exit" | sshpass -p 'terasic' ssh -tt "root@$ipAddr" > /dev/null
-				sleep 0.2
+	            echo "killall *HPS & sysctl -w net.ipv4.tcp_low_latency=0  & sysctl -w net.ipv4.tcp_slow_start_after_idle=0 & sysctl -w net.ipv4.tcp_congestion_control=cubic & sysctl -w net.ipv4.tcp_timestamp=1 & sysctl -w net.ipv4.tcp_sack=1 & exit" | sshpass -p 'terasic' ssh -tt "root@$ipAddr" > /dev/null
+				sleep 0.1
 				echo "nohup ./pollTestHPS 192.168.1.102 & exit" | sshpass -p 'terasic' ssh -tt "root@$ipAddr"
 	            echo "into hpsIP: $tmp"
 	            echo "into hpsIP: $ipAddr"

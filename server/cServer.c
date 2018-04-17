@@ -34,7 +34,8 @@ extern int errno;
 
 #define CASE_SET_TRIGGER_DELAY 0
 #define CASE_SET_RECORD_LENGTH 1
-#define CASE_SET_PACKETSIZE 2 // merged into record length
+#define CASE_SET_MODULO_TIMER 2
+//#define CASE_SET_PACKETSIZE 2 // merged into record length
 #define CASE_UPDATE_FDSET 3 // might delete this all together
 #define CASE_SET_CSERVER_DATA_ARRAY_SIZE 4
 #define CASE_ALLOCATE_CSERVER_DATA_ARRAY_MEM 5
@@ -225,7 +226,7 @@ void setupENETserver(struct POLLsock **psock){ /* function to set up ethernet so
     struct sockaddr_in server[MAX_PORTS];
 
     int n;
-    for(n=0;n<20;n++){
+    for(n=0;n<MAX_PORTS;n++){
         addPollSock(psock);
         ps = (*psock);
         ps->is_enet = 1;
@@ -301,7 +302,6 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* fun
     //printf("ipAddr = %d\n", ps->ipAddr);
     if(ps->portNum != ENET_COMMPORT){
         updatePsockField_boardNum(psock, ps->ipAddr);
-        setsockopt(ps->clifd, SOL_SOCKET, SO_RCVBUF, &recvbuff, sizeof(recvbuff));
         
     } else {
         setsockopt(ps->clifd, IPPROTO_TCP, TCP_NODELAY, &ONE, sizeof(int));
@@ -368,21 +368,27 @@ void setDataAddrPointers(struct POLLsock **psock, uint8_t **data){
     uint8_t* dtmp;
     unsigned long pulseIdx;
     pulseIdx = (g_idx3len*(g_id1*g_idx2len+g_id2)+g_id3)*g_numBoards*g_recLen;
+    int recvbuff;
 
     ps = (*psock);
     dtmp = (*data);
+    printf("g_portmax = %d\n",g_portMax);
     while(ps!=NULL){
         if( ps->is_enet && !ps->is_listener && ps->portNum != ENET_COMMPORT ){
             ps->data_addr = &dtmp[ 8*( pulseIdx + g_enetBoardIdx[ps->boardNum]*g_recLen + (ps->portNum-ENET_COMMPORT-1)*g_packetsize ) ];
             if(g_recLen % g_packetsize){
                 if(ps->portNum == g_portMax){
+                    //printf("hello!\n");
                     ps->dataLen = g_recLen%g_packetsize;
                 } else {
+                    //printf("goodbye!\n");
                     ps->dataLen = g_packetsize;
                 }                
             } else {
                 ps->dataLen = g_packetsize;
             }
+            recvbuff = ps->dataLen*sizeof(uint64_t);
+            setsockopt(ps->clifd, SOL_SOCKET, SO_RCVBUF, &recvbuff, sizeof(recvbuff));
         }
         ps = ps->next;
     }
@@ -435,11 +441,11 @@ void resetFPGAdataAcqParams(){ /* function to reset data acquisition variables o
     fmsg[0] = CASE_SET_TRIGGER_DELAY; fmsg[1] = g_trigDelay;
     sendENETmsg(fmsg);
     
-    fmsg[0] = CASE_SET_RECORD_LENGTH; fmsg[1] = g_recLen;
+    fmsg[0] = CASE_SET_RECORD_LENGTH; fmsg[1] = g_recLen; fmsg[2] = g_packetsize;
     sendENETmsg(fmsg);
 
-    fmsg[0] = CASE_SET_PACKETSIZE; fmsg[1] = g_packetsize;
-    sendENETmsg(fmsg);
+    //fmsg[0] = CASE_SET_PACKETSIZE; fmsg[1] = g_packetsize;
+    //sendENETmsg(fmsg);
 }
 
 
@@ -512,13 +518,14 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     unsigned long data_idx;                                             /* index of where to write incoming data in the 'data' array */
     data = (uint8_t *)malloc(8*MAX_FPGAS*g_recLen*sizeof(uint8_t));     /* initial memory allocation for 'data' */
 
+    int sendIdx;
     int k,l,m,n;
     int dummy;
     int dataAcqGo;                                                      /* flag to put SoC in state to acquire data or not */
     int nfds,nrecv,recvCount,nsent;                                         /* number of fds ready, number of bytes recv'd per read, sum of nrecv'd */
     int runner;                                                         /* flag to run the server, closes program if set to 0 */
     int timeout_ms;
-    
+    sendIdx = 0;
     k=0;
     dataAcqGo = 1;
     runner = 1;
@@ -619,17 +626,16 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                     break;
                                 }
 
-                                case(CASE_SET_PACKETSIZE):{
-                                    if(fmsg.msg[1] <= g_recLen && fmsg.msg[1] >= MIN_PACKETSIZE){
-                                        g_packetsize = fmsg.msg[1];
-                                        sendENETmsg(fmsg.msg);
-                                        printf("packetsize set to: %lu\n\n",g_packetsize);
+                               case(CASE_SET_MODULO_TIMER):{
+                                    if( fmsg.msg[1] > 0 && fmsg.msg[2] < 5000 && fmsg.msg[3] < 5000){
+                                        printf("boardModulo = %u, moduloTimer = %u, packetWait = %u\n\n",fmsg.msg[1],fmsg.msg[2],fmsg.msg[3]);
                                     } else {
-                                        printf("invalid packetsize (%lu), setting equal to recLen (%lu)\n",(unsigned long)fmsg.msg[1],g_recLen); 
-                                        g_packetsize = g_recLen;
-                                        fmsg.msg[1] = g_recLen;
-                                        sendENETmsg(fmsg.msg);
+                                        fmsg.msg[1] = 1;
+                                        fmsg.msg[2] = 0;
+                                        fmsg.msg[3] = 0;
+                                        printf("invalid boardModulo, moduloTimer setting to 1, 0\n\n");
                                     }
+                                    sendENETmsg(fmsg.msg);
                                     break;
                                 }
 
@@ -671,6 +677,7 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                         printf("allocator error\n");
                                         g_maxDataIdx = MAX_FPGAS*2*g_recLen*sizeof(uint64_t);
                                     }
+                                    updateBoardGlobals(&psock);
                                     setDataAddrPointers(&psock,&data);
                                     break;
                                 }
@@ -800,7 +807,16 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 }
                                 
                                 case(CASE_QUERY_DATA):{
-                                    sendENETmsg(fmsg.msg);
+                                    if(!fmsg.msg[1]){
+                                        sendENETmsg(fmsg.msg);
+                                        sendIdx = 0;
+                                    } else {
+                                        sendENETmsg(fmsg.msg);
+                                        sendIdx = 1;
+                                        //for(sendIdx=0;sendIdx<fmsg.msg[1];sendIdx++){
+                                        //    sendENETmsgSingle(fmsg.msg,g_connectedBoards[sendIdx]);
+                                        //}
+                                    }
                                     recvCount = 0;
                                     break;
                                 }
@@ -863,6 +879,21 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                             if( nrecv == -1 )
                                 perror("data recv error: ");
                             deletePollSock(&psock,ps->clifd);
+                        }
+                        if( sendIdx ){
+                            /*if((recvCount % (g_recLen*8*sizeof(uint8_t))) == 0){
+                                if(sendIdx<g_numBoards){
+                                    emsg[0] = CASE_QUERY_DATA;
+                                    sendENETmsgSingle(emsg,g_connectedBoards[sendIdx]);
+                                    sendIdx++;
+                                }
+                            }*/
+                            //printf("p_idx, dataLen = %d, %d, %d, %d\n",ps->p_idx,ps->dataLen*8,ps->portNum - INIT_PORT, g_portMax);
+                            if( ps->p_idx == 8*ps->dataLen && ps->portNum != g_portMax ){
+                                //printf("pt2 p_idx, dataLen = %d, %d, %d\n",ps->p_idx,ps->dataLen*8,ps->portNum - INIT_PORT);
+                                emsg[0] = CASE_QUERY_DATA; emsg[1] = 1; emsg[2] = ps->portNum - INIT_PORT;
+                                sendENETmsgSingle(emsg,ps->boardNum);
+                            }
                         }
                         //printf("recvCount %d, %lu\n",recvCount, g_recLen*8*sizeof(uint8_t)*g_numBoards); 
                         /* if all data has been collected by cServer, let the python UI know so it can move on with the program */

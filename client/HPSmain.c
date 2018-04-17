@@ -59,7 +59,7 @@
 // case flags for switch statement in FPGA_dataAcqController
 #define CASE_TRIGDELAY 0
 #define CASE_RECLEN 1
-#define CASE_SET_PACKETSIZE 2
+#define CASE_SET_MODULO_TIMER 2
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
 #define CASE_QUERY_BOARD_INFO 12
@@ -88,7 +88,13 @@ uint32_t g_boardNum;
 int g_dataAcqGo=0;
 int g_numPorts=0;
 int g_maxfd;
+
+uint32_t g_moduloBoardNum;
+uint32_t g_moduloTimer;
+uint32_t g_packetWait;
+
 const char *g_serverIP;
+
 // load user defined functions 
 #include "client_funcs.h"
 
@@ -97,6 +103,9 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	g_recLen = 2048;
     g_packetsize = 2048;
 	g_numPorts = (g_recLen-1)/g_packetsize+1;
+	g_moduloBoardNum = 1;
+	g_moduloTimer = 0;
+	g_packetWait = 0;
 	g_serverIP=argv[1];
 	
 	struct FPGAvars FPGA;

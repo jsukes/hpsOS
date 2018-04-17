@@ -215,7 +215,7 @@ void disconnectEnetSock(struct ENETsock **ENET, int portNum, fd_set *masterfds){
         }
     }
     *ENET = enet0;
-    printf("board %d, port %d was deactivated\n", (*ENET)->sockfd, (*ENET)->portNum);
+    printf("board %d, port %d was deactivated\n", g_boardNum, (*ENET)->portNum);
 }
 
 
@@ -223,7 +223,7 @@ void setDataAddrPointers(struct ENETsock **ENET, volatile uint8_t *dataAddr0, fd
     struct ENETsock *enet;
     int addrRmndr = g_recLen;
     int dataLen;
-    
+    int sendbuff;
     enet = (*ENET)->commsock;
 
     /* check if sockets exist on the desired ports, if not add them */
@@ -252,9 +252,16 @@ void setDataAddrPointers(struct ENETsock **ENET, volatile uint8_t *dataAddr0, fd
         dataLen = ( g_packetsize < addrRmndr ) ? g_packetsize : addrRmndr;
         enet->data_addr = dataAddr0+(enet->portNum-1)*8*dataLen;
         enet->dataLen = dataLen;
+        sendbuff = enet->dataLen*sizeof(uint64_t);
+		setsockopt(enet->sockfd, SOL_SOCKET, SO_SNDBUF, &sendbuff, sizeof(sendbuff)); 
         addrRmndr -= dataLen;
         enet = enet->prev;
     }
+    
+    while(enet != NULL){
+		disconnectEnetSock(ENET,enet->portNum,masterfds);
+        enet = enet->prev;
+	}
 }
 
 
@@ -267,8 +274,8 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 		//~ printf("enet0 %d, %d, %d, %d\n", enet0->sockfd, enet0->is_commsock, enet0->portNum, enet0->is_active);
 		//~ enet0 = enet0->next;
 	//~ }
-
-	int tmp = 0;
+	int portNum=0;
+	static int tmp;
     int nsent;	
 	//~ printf("enetmsg %u, %u, %u, %u\n",enetmsg[0],enetmsg[1],enetmsg[2],enetmsg[3]);	
 	switch(enetmsg[0]){
@@ -301,16 +308,24 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			break;
 		}
 
-        case(CASE_SET_PACKETSIZE):{
-			DREF(FPGA->transReady) = 0;
-			if( enetmsg[1] >= MIN_PACKETSIZE && enetmsg[1] <= g_recLen ){
-                g_packetsize = enetmsg[1];
-				printf("packetsize set to %u\n",g_packetsize);
+        case(CASE_SET_MODULO_TIMER):{
+			if( enetmsg[1] > 0 ){
+                g_moduloBoardNum = enetmsg[1];
+				if( enetmsg[2] < 5000 ){
+					g_moduloTimer = enetmsg[2];
+				} else {
+					g_moduloTimer = 0;
+				}
+				if( enetmsg[3] < 5000 ){
+					g_packetWait = enetmsg[3];
+				} else {
+					g_packetWait = 0;
+				}
 			} else {
-                g_packetsize = g_recLen;
+                g_moduloBoardNum = 1;
+                g_moduloTimer = 0;
+                g_packetWait = 0;
             }
-            g_numPorts = (g_recLen-1)/g_packetsize + 1;
-            setDataAddrPointers(ENET, FPGA->onchip1, masterfds);
             break;
         }
 
@@ -331,34 +346,60 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 		}
 		
 		case(CASE_QUERY_DATA):{
+			if(enetmsg[1] == 0 || enetmsg[2] == 0){
+				usleep((g_boardNum%g_moduloBoardNum)*g_moduloTimer);
+				tmp = 0;
+			}
 			while( !DREF(FPGA->transReady) && ++tmp<1000 ){
 				usleep(10);
 			}
-			
 			if( DREF(FPGA->transReady) ){
-				enet0 = commsock->prev;
-                while( enet0 != NULL && enet0->is_active ){
-					//~ printf("sending from port %d\n", enet0->portNum);
-					setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_CORK,&ONE,sizeof(int));
-                    nsent = send(enet0->sockfd,DREFP(enet0->data_addr),enet0->dataLen*8*sizeof(uint8_t),0);	
-                    setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_CORK,&ZERO,sizeof(int));
-					if( nsent < 0 )
-						perror("error sending data:");
-					setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
-					enet0 = enet0->prev;
+				
+				if(enetmsg[1] == 0){
+					enet0 = commsock->prev;
+					while( enet0 != NULL && enet0->is_active ){
+						setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_CORK,&ONE,sizeof(int));
+						nsent = send(enet0->sockfd,DREFP(enet0->data_addr),enet0->dataLen*8*sizeof(uint8_t),0);	
+						setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_CORK,&ZERO,sizeof(int));
+						if( nsent < 0 )
+							perror("error sending data:");
+						setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+						enet0 = enet0->prev;
+						usleep(g_packetWait);
+					}
+					portNum = 0;
+				} else {
+					portNum = enetmsg[2]+1;
+					if(portNum <= g_numPorts){
+						enet0 = commsock->prev;
+						while( enet0->portNum != portNum )
+							enet0 = enet0->prev;
+						
+						setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_CORK,&ONE,sizeof(int));
+						nsent = send(enet0->sockfd,DREFP(enet0->data_addr),enet0->dataLen*8*sizeof(uint8_t),0);	
+						setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_CORK,&ZERO,sizeof(int));
+						if( nsent < 0 )
+							perror("error sending data:");
+						setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+					} else {
+						portNum = 0;
+					}
 				}
+				
 			} else {
                 emsg[0] = CASE_QUERY_DATA; emsg[1] = g_boardNum; emsg[2] = MSG_QUERY_TIMEOUT;
                 //send(commsock->sockfd,emsg,4*sizeof(uint32_t),0);
                 printf("query data timed out (10ms)\n");
             }
-
-			DREF(FPGA->stateReset) = 1; 
-			usleep(10);
-			DREF(FPGA->read_addr) = g_recLen;
-			DREF(FPGA->read_addr) = 0;
-			DREF(FPGA->stateReset) = 0;
-			tmp = 0;
+			if(portNum == 0){
+				DREF(FPGA->stateReset) = 1; 
+				usleep(10);
+				DREF(FPGA->read_addr) = g_recLen;
+				DREF(FPGA->read_addr) = 0;
+				DREF(FPGA->stateReset) = 0;
+				tmp = 0;
+			}
+			//~ printf("trans ready = %lu\n",(unsigned long) DREF(FPGA->transReady));
 			break;	
 		}
 	
