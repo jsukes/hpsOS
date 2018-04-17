@@ -95,7 +95,7 @@ const char *g_serverIP;
 
 int main(int argc, char *argv[]) { printf("into main!\n");
 	g_recLen = 2048;
-    g_packetsize = 512;
+    g_packetsize = 2048;
 	g_numPorts = (g_recLen-1)/g_packetsize+1;
 	g_serverIP=argv[1];
 	
@@ -133,7 +133,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 				if( FD_ISSET( enet->sockfd, &readfds ) ){ // incoming message from cServer
 				    n++;
                     if( enet->is_commsock ){
-						nrecv = recv(enet->sockfd,&enetmsg,4*sizeof(uint32_t),0);	
+						nrecv = recv(enet->sockfd,&enetmsg,4*sizeof(uint32_t),0);
+						//~ printf("outer enetmsg %u, %u, %u, %u\n",enetmsg[0],enetmsg[1],enetmsg[2],enetmsg[3]);	
 						setsockopt(enet->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));	
 						if( nrecv == 0 ){
 							RUN_MAIN = 0;
@@ -157,8 +158,8 @@ int main(int argc, char *argv[]) { printf("into main!\n");
 	                    }
 					}
 				}
-                if( n == nready )
-                    break;
+                //~ if( n == nready )
+                    //~ break;
 				enet = enet->prev; 
 			}
 		}

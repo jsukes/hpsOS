@@ -23,20 +23,28 @@ class dataServer():
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
-	def setRecLen(self,rl):
+	def setRecLen(self,rl,ps=0):
 		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
 		# the acquisition time window = [rl/20] us
 		if ( rl >= MIN_PACKETSIZE ) and (rl <= REC_LEN_MAX):
 			self.recLen = int(rl)
+			if ( ps >= MIN_PACKETSIZE ) and (ps <= rl):
+				self.packetsize = int(ps)
+			else:
+				ps = int(rl)
+				if (ps != 0):
+					print 'invalid packetsize, setting equal to recLen'	
+				self.packetsize = int(ps)
+				
 		else:
-			print 'Invalid Record Length. [ Valid range = 128-8192 ]. Setting recLen to 2048, packetsize to 512'
+			print 'Invalid Record Length. [ Valid range = 128-8192 ]. Setting recLen to 2048, packetsize to 2048'
 			self.recLen = 2048
-			self.packetsize = 512
+			self.packetsize = 2048
 			
-		msg = struct.pack(self.cmsg,1,self.recLen,0,0,"")
+		msg = struct.pack(self.cmsg,1,self.recLen,self.packetsize,0,"")
 		self.ipcsock.send(msg)
-		msg = struct.pack(self.cmsg,2,self.packetsize,0,0,"")
-		self.ipcsock.send(msg)
+		#~ msg = struct.pack(self.cmsg,2,self.packetsize,0,0,"")
+		#~ self.ipcsock.send(msg)
 		time.sleep(0.05)
 	
 	def setPacketsize(self,ps):
@@ -79,7 +87,6 @@ class dataServer():
 		msg = struct.pack(self.cmsg,5,1,0,0,"")
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
-		self.getBoardCount()
 		
 	def toggleDataAcq(self,da):
 		# puts the cServer/SoCs into or out of a data acquisition state. takes integer 'da' as input
@@ -126,15 +133,20 @@ class dataServer():
 	
 	def readData(self):
 		
-		msg = struct.pack(self.cmsg,11,0,0,0,"")
+		# the '1' after the '11' tells the cServer to setup and share the memory region
+		msg = struct.pack(self.cmsg,11,1,0,0,"")
 		self.ipcsock.send(msg)
-		self.ipcWait()
 		
-		# Create a shared memory object
-		memory = sysv_ipc.SharedMemory(self.shmkey)
-		
-		# Read value from shared memory
-		memory_value = memory.read()
+		if self.ipcWait(2) > 0:	
+			# Create a shared memory object
+			memory = sysv_ipc.SharedMemory(self.shmkey)
+			
+			# Read value from shared memory
+			memory_value = memory.read()
+			print len(memory_value)
+			# the '0' after the '11' tells the cServer that we've acquired the data and that it can release it
+			msg = struct.pack(self.cmsg,11,0,0,0,"")
+			self.ipcsock.send(msg)
 		
 		return memory_value
   	
@@ -153,17 +165,25 @@ class dataServer():
 		self.ipcsock.send(msg)
 			
 	def getBoardInfo(self):
+		#~ self.ipcsock.recv(16,0)
 		# gets the identifying numbers of the boards connected to the cServer 
 		msg = struct.pack(self.cmsg,12,0,0,0,"")
 		self.ipcsock.send(msg)
 		
+		while(1):
+			bn = self.ipcWait(0.5)
+			if bn == 0:
+				break
+			else:
+				print 'connected to board:', struct.Struct('=I').unpack(bn)[0]
+		
 		msg = struct.pack(self.cmsg,13,1,0,0,"")
 		self.ipcsock.send(msg)
-		self.ipcWait()
-		self.boardNums = np.array(struct.Struct('{}{}{}'.format('=64I')).unpack(self.ipcsock.recv(64*4,socket.MSG_WAITALL)))
+		dummy = self.ipcsock.recv(64*4,socket.MSG_WAITALL)
+		self.boardNums = np.array(struct.Struct('{}'.format('=64I')).unpack(dummy))
 		self.boardCount = len(np.argwhere(self.boardNums>0))
 		
-		return self.boardNums
+		#~ return self.boardNums
 	
 	def queryData(self):
 		# makes the socs check for data 
@@ -172,7 +192,6 @@ class dataServer():
 			
 	def shutdown(self):
 		# shuts down the SoCs and C server
-		
 		msg = struct.pack(self.cmsg,17,0,0,0,"")
 		self.ipcsock.send(msg)
 		self.ipcsock.close()
@@ -181,13 +200,11 @@ class dataServer():
 	def disconnect(self): 
 		# disconnect python from the C server but leave it running in the background so you can reconnect to it later
 		self.ipcsock.close()
-		#~ self.ff.close()
 		time.sleep(0.05)
 		
 	def connect(self): 
 		# connect to the C server. 
 		# Note: python will block until it is connected to the cServer. if the python program gets 'stuck' before it begins it's likely because the cServer stopped running or crashed, just relaunch and python should connect to it. You don't have to restart python before (re)launching the cServer, but if it still hangs or returns an error restart them both. If it still doesn't work, delete the files 'data_pipe' and 'lithium_ipc' in the folder containing the cServer and restart the cServer and python program again. 
-		#~ self.ff = open(self.IPCFIFO,"w",0)
 		self.ipcsock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 		self.ipcsock.connect(self.IPCSOCK)
 	
@@ -198,12 +215,15 @@ class dataServer():
 			nready = select.select([self.ipcsock], [], [], to)
 			if nready[0]:
 				#~ print 'yoyoyo'
-				return self.ipcsock.recv(4,socket.MSG_WAITALL)
+				dummy = self.ipcsock.recv(4, socket.MSG_WAITALL)
+				return dummy
 			else:
 				print 'ipcWait timed out'
 				return 0
 		else:
-			return self.ipcsock.recv(4,socket.MSG_WAITALL)
+			dummy = self.ipcsock.recv(4, socket.MSG_WAITALL)
+			#~ print 'wait2',len(dummy)
+			return dummy
 				
 	def __init__(self):	
 		# class intialization for the python data server 
@@ -218,7 +238,7 @@ class dataServer():
 		self.dataAcqMode = 0
 		self.timeOut = 1e3
 		self.recLen = 2048
-		self.packetsize = 512
+		self.packetsize = 2048
 		self.id1,self.id2,self.id3 = 0,0,0
 		self.l1, self.l2, self.l3 = 1,1,1
 		self.boardCount = 0

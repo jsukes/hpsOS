@@ -185,6 +185,7 @@ void connectEnetSock(struct ENETsock **ENET, int portNum, fd_set *masterfds){
 		enet = enet->prev;
 	}
 	*ENET = enet0;
+	printf("board %d, port %d is active\n", (*ENET)->sockfd, (*ENET)->portNum);
 }
 
 
@@ -214,6 +215,7 @@ void disconnectEnetSock(struct ENETsock **ENET, int portNum, fd_set *masterfds){
         }
     }
     *ENET = enet0;
+    printf("board %d, port %d was deactivated\n", (*ENET)->sockfd, (*ENET)->portNum);
 }
 
 
@@ -259,12 +261,18 @@ void setDataAddrPointers(struct ENETsock **ENET, volatile uint8_t *dataAddr0, fd
 void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_set *masterfds){ // process that talks to the FPGA and transmits data to the SoCs
 	struct ENETsock *enet0, *commsock;
 	commsock = (*ENET)->commsock;
+	
+	//~ enet0 = (*ENET);
+	//~ while(enet0 != NULL){
+		//~ printf("enet0 %d, %d, %d, %d\n", enet0->sockfd, enet0->is_commsock, enet0->portNum, enet0->is_active);
+		//~ enet0 = enet0->next;
+	//~ }
 
 	int tmp = 0;
     int nsent;	
-		
+	//~ printf("enetmsg %u, %u, %u, %u\n",enetmsg[0],enetmsg[1],enetmsg[2],enetmsg[3]);	
 	switch(enetmsg[0]){
-
+		
 		case(CASE_TRIGDELAY):{ // change trig delay
 			DREF(FPGA->trigDelay) = 20*enetmsg[1];
 			printf("trig Delay set to %.2f\n",(float)DREF(FPGA->trigDelay)/20.0);
@@ -276,12 +284,16 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			if( enetmsg[1]>=MIN_PACKETSIZE && enetmsg[1]<=MAX_RECLEN ){
 				DREF(FPGA->recLen) = enetmsg[1];
 				g_recLen = enetmsg[1];
-                g_packetsize = ( g_packetsize <= g_recLen ) ? g_packetsize : g_recLen;
-				printf("recLen set to %zu, packetsize = %zu\n",DREF(FPGA->recLen), g_packetsize);
+				if( enetmsg[2]>=MIN_PACKETSIZE && enetmsg[2]<=enetmsg[1] ){
+					g_packetsize = enetmsg[2];
+				} else {
+					g_packetsize = g_recLen;
+				}
+				printf("[ recLen, packetsize ] set to [ %zu, %zu ]\n",DREF(FPGA->recLen), g_packetsize);
 			} else {
 				DREF(FPGA->recLen) = 2048;
 				g_recLen = DREF(FPGA->recLen);
-                g_packetsize = 512;
+                g_packetsize = 2048;
 				printf("invalid recLen, defaulting to 2048, packetsize to 512\n");
 			}
             g_numPorts = (g_recLen-1)/g_packetsize + 1;
@@ -326,7 +338,10 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			if( DREF(FPGA->transReady) ){
 				enet0 = commsock->prev;
                 while( enet0 != NULL && enet0->is_active ){
+					//~ printf("sending from port %d\n", enet0->portNum);
+					setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_CORK,&ONE,sizeof(int));
                     nsent = send(enet0->sockfd,DREFP(enet0->data_addr),enet0->dataLen*8*sizeof(uint8_t),0);	
+                    setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_CORK,&ZERO,sizeof(int));
 					if( nsent < 0 )
 						perror("error sending data:");
 					setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));

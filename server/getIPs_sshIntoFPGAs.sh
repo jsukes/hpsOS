@@ -15,11 +15,11 @@ for ipAddr in $IPS; do
 	tmp=$(echo $ipAddr | cut -d . -f 4 | tr -d '[:space:]')
 	LIP=$(echo $ipAddr | tr -d '[:space:]')
 	if [ "$tmp" != "$mip" ]; then
-		if [ "$tmp" -gt 102 ]; then
+		if [ "$tmp" -gt 111 ]; then
 			#~ if [ "$tmp" -lt 131 ]; then
 				#dummy=$(ssh-keygen -R $ipAddr)
 	            #dummy=$(ssh-keyscan -H $ipAddr >> ~/.ssh/known_hosts)
-	            echo "killall *HPS & exit" | sshpass -p 'terasic' ssh -tt "root@$ipAddr" > /dev/null
+	            echo "killall *HPS & sysctl -w net.ipv4.tcp_timestamp=1 & sysctl -w net.ipv4.tcp_sack=1 & exit" | sshpass -p 'terasic' ssh -tt "root@$ipAddr" > /dev/null
 				sleep 0.2
 				echo "nohup ./pollTestHPS 192.168.1.102 & exit" | sshpass -p 'terasic' ssh -tt "root@$ipAddr"
 	            echo "into hpsIP: $tmp"
