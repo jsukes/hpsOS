@@ -15,7 +15,7 @@ for ipAddr in $IPS; do
 	tmp=$(echo $ipAddr | cut -d . -f 4 | tr -d '[:space:]')
 	LIP=$(echo $ipAddr | tr -d '[:space:]')
 	if [ "$tmp" != "$mip" ]; then
-		if [ "$tmp" -gt 111 ]; then
+		if [ "$tmp" -gt 110 ]; then
 			#~ if [ "$tmp" -lt 131 ]; then
 				#dummy=$(ssh-keygen -R $ipAddr)
 	            #dummy=$(ssh-keyscan -H $ipAddr >> ~/.ssh/known_hosts)

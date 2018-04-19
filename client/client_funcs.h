@@ -354,7 +354,6 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 				usleep(10);
 			}
 			if( DREF(FPGA->transReady) ){
-				
 				if(enetmsg[1] == 0){
 					enet0 = commsock->prev;
 					while( enet0 != NULL && enet0->is_active ){
@@ -381,7 +380,8 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 						if( nsent < 0 )
 							perror("error sending data:");
 						setsockopt(enet0->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
-					} else {
+					}
+					if(portNum == g_numPorts){
 						portNum = 0;
 					}
 				}
