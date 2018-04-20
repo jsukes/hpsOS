@@ -370,7 +370,7 @@ void setDataAddrPointers(struct POLLsock **psock, uint8_t **data){
 
     ps = (*psock);
     dtmp = (*data);
-    printf("g_portmax = %d\n",g_portMax);
+    //printf("g_portmax = %d\n",g_portMax);
     while(ps!=NULL){
         if( ps->is_enet && !ps->is_listener && ps->portNum != ENET_COMMPORT ){
             ps->data_addr = &dtmp[ 8*( pulseIdx + g_enetBoardIdx[ps->boardNum]*g_recLen + (ps->portNum-ENET_COMMPORT-1)*g_packetsize ) ];
@@ -783,8 +783,6 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                 }
                                 
                                 case(CASE_GET_BOARD_INFO_IPC):{
-                                    /* This function returns the board numbers of the connected socs to the python UI 
-                                        - msg[1], msg[2], msg[3]*, and buff are unused.*/	
                                     printf("updating cServer board info\n");
                                     updateBoardGlobals(&psock);
                                     if(fmsg.msg[1]){

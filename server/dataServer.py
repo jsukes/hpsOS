@@ -47,44 +47,20 @@ class dataServer():
 		#~ self.ipcsock.send(msg)
 		time.sleep(0.05)
 	
-	def setModuloTimer(self,moduloBoardNum,moduloTimer,packetWait=0):
-		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
-		# the acquisition time window = [rl/20] us
-		if (moduloBoardNum>0) and (moduloTimer<5000):
-			self.moduloBoardNum = moduloBoardNum
-			self.moduloTimer = moduloTimer
+	def setInterleaveDepthAndTimer(self,interleaveDepth,interleaveTimeDelay,packetWait=0):
+		if (interleaveDepth>0) and (interleaveTimeDelay<5000):
+			self.interleaveDepth = interleaveDepth
+			self.interleaveTimeDelay = interleaveTimeDelay
 			self.packetWait = packetWait
 			if packetWait<0 or packetWait>5000:
 				self.packetWait = 0
-			msg = struct.pack(self.cmsg,2,moduloBoardNum,moduloTimer,packetWait,"")
+			msg = struct.pack(self.cmsg,2,interleaveDepth,interleaveTimeDelay,packetWait,"")
 		else:
-			self.moduloBoardNum = 1
-			self.moduloTimer = 0
+			self.interleaveDepth = 1
+			self.interleaveTimeDelay = 0
 			print 'invalid modulo settings'		
 			msg = struct.pack(self.cmsg,2,1,0,0,"")
 			
-		self.ipcsock.send(msg)
-		time.sleep(0.05)
-		
-	def setPacketsize(self,ps):
-		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
-		# the acquisition time window = [rl/20] us
-		if (ps >= MIN_PACKETSIZE) and (ps <= self.recLen):
-			self.packetsize = int(ps)
-		else:
-			print 'Invalid packetsize, setting equal to recLen.'
-			self.packetsize = self.recLen
-			
-		msg = struct.pack(self.cmsg,2,self.packetsize,0,0,"")
-		self.ipcsock.send(msg)
-		time.sleep(0.05)
-		
-	def updateFDSet(self):
-		# sets the number of data points to collect per acquisition, NOT the time duration of acquisition. takes integer 'rl' as input, unitless
-		# the acquisition time window = [rl/20] us
-		
-			
-		msg = struct.pack(self.cmsg,3,self.packetsize,0,0,"")
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
 			
@@ -150,8 +126,7 @@ class dataServer():
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
 	
-	def readData(self):
-		
+	def readData(self):	
 		# the '1' after the '11' tells the cServer to setup and share the memory region
 		msg = struct.pack(self.cmsg,11,1,0,0,"")
 		self.ipcsock.send(msg)
@@ -168,12 +143,8 @@ class dataServer():
 			self.ipcsock.send(msg)
 		
 		return memory_value
-  	
-	def queryBoardInfo(self):
-		msg = struct.pack(self.cmsg,12,0,0,0,"")
-		self.ipcsock.send(msg)
 			
-	def getBoardInfo(self):
+	def queryBoardInfo(self):
 		#~ self.ipcsock.recv(16,0)
 		# gets the identifying numbers of the boards connected to the cServer 
 		msg = struct.pack(self.cmsg,12,0,0,0,"")
@@ -184,7 +155,7 @@ class dataServer():
 			if bn == 0:
 				break
 			else:
-				print 'connected to board:', struct.Struct('=I').unpack(bn)[0], struct.Struct('=I').unpack(bn)[0]%self.moduloBoardNum
+				print 'connected to board:', struct.Struct('=I').unpack(bn)[0], struct.Struct('=I').unpack(bn)[0]%self.interleaveDepth
 		
 		msg = struct.pack(self.cmsg,13,1,0,0,"")
 		self.ipcsock.send(msg)
@@ -246,8 +217,8 @@ class dataServer():
 		self.timeOut = 1e3
 		self.recLen = 2048
 		self.packetsize = 2048
-		self.moduloBoardNum = 1
-		self.moduloTimer = 0
+		self.interleaveDepth = 1
+		self.interleaveTimeDelay = 0
 		self.packetWait = 0
 		self.id1,self.id2,self.id3 = 0,0,0
 		self.l1, self.l2, self.l3 = 1,1,1

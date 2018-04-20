@@ -308,7 +308,7 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			break;
 		}
 
-        case(CASE_SET_MODULO_TIMER):{
+        case(CASE_SET_INTERLEAVE_DEPTH_AND_TIMER):{
 			if( enetmsg[1] > 0 ){
                 g_moduloBoardNum = enetmsg[1];
 				if( enetmsg[2] < 5000 ){

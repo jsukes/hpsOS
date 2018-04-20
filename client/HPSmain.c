@@ -59,7 +59,7 @@
 // case flags for switch statement in FPGA_dataAcqController
 #define CASE_TRIGDELAY 0
 #define CASE_RECLEN 1
-#define CASE_SET_MODULO_TIMER 2
+#define CASE_SET_INTERLEAVE_DEPTH_AND_TIMER 2
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
 #define CASE_QUERY_BOARD_INFO 12
