@@ -1,0 +1,34 @@
+
+#################################################
+##### settings that have worked best so far #####
+#################################################
+
+### congestion control
+sudo sysctl -w net.ipv4.tcp_congestion_control=bbr
+
+### default qdisc (queueing discipline, this setting is super important)
+sudo sysctl -w net.core.default_qdisc=fq_codel
+
+
+
+#################################################
+##### commands for changing sysctl settings #####
+#################################################
+
+### add the congestion control to the list of useable congestion control algorithms
+### need to do this before you can set the chosen congestion control as the one to go with
+sudo modprobe -a tcp_dctcp
+
+### check which congestion control is currently in use
+cat /proc/sys/net/ipv4/tcp_congestion_control
+
+### set congestion control algorithm for the current session
+sudo sysctl -w net.ipv4.tcp_congestion_control=westwood
+
+### set the congestion control algorithm permanently?
+sudo echo "dctcp" /proc/sys/net/ipv4/tcp_congestion_control
+
+### try the 'dctcp' control algorithm. its supposed to be for datacenters, might be good for the kinds of traffic the receive system generates
+https://tools.ietf.org/html/rfc8257
+
+
