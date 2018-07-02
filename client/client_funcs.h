@@ -26,9 +26,14 @@ struct FPGAvars{ // structure to hold variables that are mapped to the FPGA hard
 	uint32_t volatile* stateReset;
 	uint32_t volatile* trigCnt;
 	uint32_t volatile* stateVal;
+	uint32_t volatile* arduinoTrigDelay;
+	uint32_t volatile* arduinoTrigNum;
+	uint32_t volatile* arduinoTrigComms;
 	
 	uint32_t volatile* onchip0;
 	uint8_t volatile* onchip1;
+	uint16_t volatile** arduinoTrigVals;
+	uint32_t volatile** arduinoTrigWaits;
 };
 
 
@@ -89,9 +94,19 @@ int FPGA_init(struct FPGAvars *FPGA){ // maps the FPGA hardware registers to the
 	
 	FPGA->stateVal = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_F2H_FPGA_STATE_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
 	
+	FPGA->arduinoTrigDelay = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_ARDUINO_TRIG_DELAY_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->arduinoTrigNum = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_ARDUINO_TRIG_NUM_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
+	FPGA->arduinoTrigComms = FPGA->virtual_base + ( ( uint32_t )( ALT_LWFPGASLVS_OFST + PIO_ARDUINO_COMMS_BASE ) & ( uint32_t )( HW_REGS_MASK ) );
+	
 	FPGA->onchip0 = FPGA->axi_virtual_base + ( ( uint32_t  )( ONCHIP_MEMORY2_0_BASE ) & ( uint32_t)( HW_FPGA_AXI_MASK ) );
 
 	FPGA->onchip1 = FPGA->axi_virtual_base + ( ( uint32_t  )( ONCHIP_MEMORY2_1_BASE ) & ( uint32_t)( HW_FPGA_AXI_MASK ) );
+	
+	FPGA->arduinoTrigVals = FPGA->axi_virtual_base + ( ( uint32_t  )( ONCHIP_MEMORY2_2_BASE ) & ( uint32_t)( HW_FPGA_AXI_MASK ) );
+	
+	FPGA->arduinoTrigWaits = FPGA->axi_virtual_base + ( ( uint32_t  )( ONCHIP_MEMORY2_3_BASE ) & ( uint32_t)( HW_FPGA_AXI_MASK ) );
 	
 	DREF(FPGA->transReady) = 0;
 	DREF(FPGA->trigDelay) = 0;
@@ -281,8 +296,9 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 	switch(enetmsg[0]){
 		
 		case(CASE_TRIGDELAY):{ // change trig delay
-			DREF(FPGA->trigDelay) = 20*enetmsg[1];
-			printf("trig Delay set to %.2f\n",(float)DREF(FPGA->trigDelay)/20.0);
+			DREF(FPGA->trigDelay) = ADC_CLK*enetmsg[1];
+			DREF(FPGA->arduinoTrigDelay) = ARDUINO_CLK*enetmsg[1];
+			printf("trig Delay set to %.2f\n",(float)DREF(FPGA->trigDelay)/((float)ADC_CLK));
 			break;
 		}
 
@@ -343,6 +359,7 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			getBoardData();
 			send(commsock->sockfd,g_boardData,4*sizeof(uint32_t),0);
             setsockopt(commsock->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+            break;
 		}
 		
 		case(CASE_QUERY_DATA):{
@@ -402,6 +419,40 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			//~ printf("trans ready = %lu\n",(unsigned long) DREF(FPGA->transReady));
 			break;	
 		}
+		
+		case(CASE_ARDUINO_TRIG_NUM):{// loads board-specific data from onboard file
+			DREF(FPGA->arduinoTrigNum) = enetmsg[1];
+			break;
+		}
+		
+		case(CASE_ARDUINO_TRIG_VALS):{// loads board-specific data from onboard file
+			DREFP16(FPGA->arduinoTrigVals)[enetmsg[1]] = enetmsg[2];
+			break;
+		}
+		
+		case(CASE_ARDUINO_TRIG_WAITS):{// loads board-specific data from onboard file
+			DREFP32(FPGA->arduinoTrigWaits)[enetmsg[1]] = enetmsg[2];
+			printf("trigwaits %d\n",enetmsg[2]);
+			break;
+		}
+		
+		case(CASE_ARDUINO_TRIG_COMMS):{// loads board-specific data from onboard file
+			DREF(FPGA->arduinoTrigComms) = enetmsg[1];
+			if( enetmsg[1] == 0x02 ){
+				DREF(FPGA->arduinoTrigComms) = 0;
+			}
+			break;
+		}
+		
+		//~ case(CASE_ARDUINO_TRIG):{// loads board-specific data from onboard file
+			//~ DREF(FPGA->arduinoTrigNum) = enetmsg[1];
+			//~ usleep(5);
+			//~ DREF(FPGA->arduinoTrigVal) = enetmsg[3];
+			//~ usleep(5);
+			//~ DREF(FPGA->arduinoTrigWait) = enetmsg[2];
+			//~ usleep(5);	
+			//~ break;
+		//~ }
 	
 		default:{
 			printf("default case, doing nothing\n");

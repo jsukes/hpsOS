@@ -167,7 +167,35 @@ class dataServer():
 		# makes the socs check for data 
 		msg = struct.pack(self.cmsg,16,nbd,0,0,"")
 		self.ipcsock.send(msg)
-			
+	
+	def setArdTrigNum(self,atn):		
+		msg = struct.pack(self.cmsg,20,atn,0,0,"")
+		self.ipcsock.send(msg)
+		time.sleep(0.05)
+		
+	def setArdTrigVal(self,num,atv):
+		msg = struct.pack(self.cmsg,21,num,atv,0,"")
+		self.ipcsock.send(msg)
+		time.sleep(0.05)
+	
+	def setArdTrigWait(self,num,atw):
+		msg = struct.pack(self.cmsg,22,num,int(atw*self.ardTrigClk),0,"")
+		self.ipcsock.send(msg)
+		time.sleep(0.05)
+		
+	def setArdTrigs(self,num=0,duration_us=1,val=0):		
+		msg = struct.pack(self.cmsg,24,int(num),int(duration_us*self.ardTrigClk),int(val),"")
+		self.ipcsock.send(msg)
+		time.sleep(0.05)
+	
+	def setArdTrigComms(self,atc):
+		# bit0 = 1 -> comms channel open (needs to stay open to send trig datas)
+		# bit1 = 1 -> enable writing to trig instruction set
+		# bit7 = 1 -> reset clocks and counters
+		msg = struct.pack(self.cmsg,23,atc,0,0,"")
+		self.ipcsock.send(msg)
+		time.sleep(0.05)
+				
 	def shutdown(self):
 		# shuts down the SoCs and C server
 		msg = struct.pack(self.cmsg,17,0,0,0,"")
@@ -211,6 +239,7 @@ class dataServer():
 		self.cmsg = '4I100s'			# tells python how to package messages to send to the cServer -> [4*(unsinged 32-bit int), string (up to 100 characters)]
 		self.shmkey = 1234
 		# default values of data acquisition variables
+		self.ardTrigClk = 20
 		self.trigDelay = 0
 		self.da = 0
 		self.dataAcqMode = 0

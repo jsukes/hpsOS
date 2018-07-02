@@ -39,7 +39,7 @@
 #include "soc_cv_av/socal/socal.h"
 #include "soc_cv_av/socal/hps.h"
 #include "soc_cv_av/socal/alt_gpio.h"       
-#include "hps_0l.h"
+#include "hps_0TxRx.h"
 
 
 #define HW_REGS_BASE ( ALT_STM_OFST )  
@@ -50,10 +50,16 @@
 #define ALT_AXI_FPGASLVS_OFST (0xC0000000) // axi_master
 #define HW_FPGA_AXI_SPAN (0x40000000) // Bridge span 1GB
 #define HW_FPGA_AXI_MASK ( HW_FPGA_AXI_SPAN - 1 )
+#define ADC_CLK (20)
+#define ARDUINO_CLK (20)
 
-
+#define DREF8(X) ( *(uint8_t *) X )
+#define DREF16(X) ( *(uint16_t *) X )
 #define DREF(X) ( *(uint32_t *) X )
 #define DREFP(X) ( (uint8_t *) X )
+#define DREFP16(X) ( (uint16_t *) X )
+#define DREFP32(X) ( (uint32_t *) X )
+
 #define INIT_PORT 3400
 
 // case flags for switch statement in FPGA_dataAcqController
@@ -64,7 +70,12 @@
 #define CASE_DATAGO 6
 #define CASE_QUERY_BOARD_INFO 12
 #define CASE_QUERY_DATA 16
-#define CASE_KILLPROGRAM 17
+#define CASE_ARDUINO_TRIG_NUM 20
+#define CASE_ARDUINO_TRIG_VALS 21
+#define CASE_ARDUINO_TRIG_WAITS 22
+#define CASE_ARDUINO_TRIG_COMMS 23
+#define CASE_ARDUINO_TRIG 24
+#define CASE_KILLPROGRAM 170
 
 #define MSG_QUERY_TIMEOUT 16
 
@@ -94,6 +105,7 @@ uint32_t g_moduloTimer;
 uint32_t g_packetWait;
 
 const char *g_serverIP;
+int g_numTrigs=0;
 
 // load user defined functions 
 #include "client_funcs.h"

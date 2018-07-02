@@ -47,6 +47,11 @@ extern int errno;
 #define CASE_QUERY_BOARD_INFO 12
 #define CASE_GET_BOARD_INFO_IPC 13
 #define CASE_QUERY_DATA 16
+#define CASE_ARDUINO_TRIG_NUM 20
+#define CASE_ARDUINO_TRIG_VALS 21
+#define CASE_ARDUINO_TRIG_WAITS 22
+#define CASE_ARDUINO_TRIG_COMMS 23
+#define CASE_ARDUINO_TRIG 24
 #define CASE_SHUTDOWN_SERVER 17
 
 
@@ -805,6 +810,31 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                     recvCount = 0;
                                     break;
                                 }
+                                
+                                case(CASE_ARDUINO_TRIG_NUM):{
+									sendENETmsg(fmsg.msg,0);
+									break;
+								}
+								
+								case(CASE_ARDUINO_TRIG_VALS):{
+									sendENETmsg(fmsg.msg,0);
+									break;
+								}
+								
+								case(CASE_ARDUINO_TRIG_WAITS):{
+									sendENETmsg(fmsg.msg,0);
+									break;
+								}
+								
+								case(CASE_ARDUINO_TRIG_COMMS):{
+									sendENETmsg(fmsg.msg,0);
+									break;
+								}
+								
+								case(CASE_ARDUINO_TRIG):{
+									sendENETmsg(fmsg.msg,0);
+									break;
+								}
                                 
                                 case(CASE_SHUTDOWN_SERVER):{
                                     /* This shuts down the SoCs and cServer 
