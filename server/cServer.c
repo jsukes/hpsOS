@@ -15,6 +15,7 @@
 #include <sys/time.h> // unused
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <pthread.h>
 extern int errno;
 
 //TESTING GIT PUSHES
@@ -78,6 +79,9 @@ struct epoll_event ev;
 struct epoll_event events[MAX_SOCKETS];
 
 
+pthread_mutex_t sockMutex;
+pthread_cond_t sockCond;
+
 struct FIFOmsg{ /* structure to store variables for communications between cServer and (python) via FIFO instead of ipc socket */
     uint32_t msg[4];
     char buff[100]; 
@@ -97,6 +101,15 @@ struct POLLsock{
     struct POLLsock *next;
     struct POLLsock *prev;
 };
+
+
+struct task{
+    struct POLLsock *ps;
+    struct task *next;
+};
+
+
+struct task *readhead = NULL, *readtail = NULL;
 
 
 void setnonblocking(int sock){
@@ -492,6 +505,41 @@ int sendDataShm(uint8_t *data, int gettingKey) {
 }
 
 
+void *getDataTask(void *args){
+
+    while(1){
+        pthread_mutex_lock(&sockMutex);
+        while(readhead == NULL)
+            pthread_cond_wait(&sockCond,&sockMutex);
+
+        struct task* tmp = readhead;
+        readhead = readhead->next;
+        free(tmp);
+        pthread_mutex_unlock(&sockMutex);
+
+        nrecv = recv(readhead->ps->clifd,(readhead->ps->data_addr+readhead->ps->p_idx),readhead->ps->dataLen*8*sizeof(uint8_t),0);
+        if( nrecv > 0 ){
+            setsockopt(readhead->ps->clifd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
+            recvCount += nrecv;
+            readhead->ps->p_idx += nrecv; 
+        } else {
+            if( nrecv == -1 )
+                perror("data recv error: ");
+        }
+        if( recvIndividually ){
+            if( ps->p_idx == 8*ps->dataLen ){
+                emsg[0] = CASE_QUERY_DATA; emsg[1] = 1; emsg[2] = ps->portNum - INIT_PORT;
+                sendENETmsg(emsg,ps->boardNum);
+            }
+        }
+
+    }   
+
+
+
+}
+
+
 int main(int argc, char *argv[]) { printf("into main!\n");
 	
     resetGlobalVars();                                                  /* sets all the global variables to their defualt values */
@@ -515,6 +563,16 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     uint8_t *data;                                                      /* array to store acquired data */
     unsigned long data_idx;                                             /* index of where to write incoming data in the 'data' array */
     data = (uint8_t *)malloc(8*MAX_FPGAS*g_recLen*sizeof(uint8_t));     /* initial memory allocation for 'data' */
+
+    pthread_t *tid;
+    tid = (pthread_t *)malloc(10*sizeof(pthread_t));
+    struct task *new_task = NULL;
+
+    pthread_mutex_init(&sockMutex,NULL);
+    pthread_cond_init(&sockCond,NULL);
+    for(data_idx=0;data_idx<10;data_idx++){
+        pthread_create(&tid[data_idx],NULL,getDataTask,NULL);
+    }
 
     int recvIndividually;
     int k,l,m,n;
@@ -883,6 +941,22 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                         }   
                     
                     } else if( events[n].events & EPOLLIN ){ /* handle incoming data from socs */
+                        
+                        new_task = malloc(sizeof(struct task));
+                        new_task->ps = ps;
+                        new_task->next = NULL;
+
+                        pthread_mutex_lock(&sockMutex);
+                        if ( readhead == NULL ){
+                            readhead = new_task;
+                            readtail = new_task;
+                        } else {
+                            readtail->next = new_task;
+                            readtail = new_task;
+                        }
+                        pthread_cond_broadcast(&sockCond);
+                        pthread_mutex_unlock(&sockMutex);
+
                         nrecv = recv(ps->clifd,(ps->data_addr+ps->p_idx),ps->dataLen*8*sizeof(uint8_t),0);
                         if( nrecv > 0 ){
                             setsockopt(ps->clifd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int)); 
