@@ -162,7 +162,19 @@ class dataServer():
 		dummy = self.ipcsock.recv(64*4,socket.MSG_WAITALL)
 		self.boardNums = np.array(struct.Struct('{}'.format('=64I')).unpack(dummy))
 		self.boardCount = len(np.argwhere(self.boardNums>0))
+	
+	def setQueryDataTimeout(self,qdto=1000):
+		# makes the socs check for data 
+		if qdto > MIN_QUERY_DATA_TIMEOUT:
+			self.queryDataTimeout = qdto		
+		else:
+			print 'Minimum Query Data Timeout = 100 (1ms)'
+			self.queryDataTimeout = 1000
+			
+		msg = struct.pack(self.cmsg,15,self.queryDataTimeout,0,0,"")	
+		self.ipcsock.send(msg)
 		
+			
 	def queryData(self,nbd=0):
 		# makes the socs check for data 
 		msg = struct.pack(self.cmsg,16,nbd,0,0,"")
@@ -220,6 +232,7 @@ class dataServer():
 		self.interleaveDepth = 1
 		self.interleaveTimeDelay = 0
 		self.packetWait = 0
+		self.queryDataTimeout = 1000
 		self.id1,self.id2,self.id3 = 0,0,0
 		self.l1, self.l2, self.l3 = 1,1,1
 		self.boardCount = 0

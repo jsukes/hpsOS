@@ -63,8 +63,12 @@
 #define CASE_CLOSE_PROGRAM 8
 #define CASE_DATAGO 6
 #define CASE_QUERY_BOARD_INFO 12
+
+#define CASE_SET_QUERY_DATA_TIMEOUT 15
 #define CASE_QUERY_DATA 16
 #define CASE_KILLPROGRAM 17
+
+
 
 #define MSG_QUERY_TIMEOUT 16
 
@@ -76,6 +80,7 @@ int RUN_MAIN = 1;
 const int ONE = 1;
 const int ZERO = 0;	
 
+uint32_t g_queryTimeout;
 uint32_t g_recLen;
 uint32_t g_packetsize;
 
@@ -102,6 +107,7 @@ const char *g_serverIP;
 int main(int argc, char *argv[]) { printf("into main!\n");
 	g_recLen = 2048;
     g_packetsize = 2048;
+    g_queryTimeout = 1000;
 	g_numPorts = (g_recLen-1)/g_packetsize+1;
 	g_moduloBoardNum = 1;
 	g_moduloTimer = 0;

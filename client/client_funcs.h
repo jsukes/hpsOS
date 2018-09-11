@@ -345,12 +345,20 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
             setsockopt(commsock->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
 		}
 		
+		case(CASE_SET_QUERY_DATA_TIMEOUT):{
+			if(enetmsg[1] > 99){
+				g_queryTimeout = enetmsg[1];
+			} else {
+				g_queryTimeout = 1000;
+			}
+		}
+		
 		case(CASE_QUERY_DATA):{
 			if(enetmsg[1] == 0 || enetmsg[2] == 0){
 				usleep((g_boardNum%g_moduloBoardNum)*g_moduloTimer);
 				tmp = 0;
 			}
-			while( !DREF(FPGA->transReady) && ++tmp<1000 ){
+			while( !DREF(FPGA->transReady) && ++tmp<g_queryTimeout ){
 				usleep(10);
 			}
 			if( DREF(FPGA->transReady) ){

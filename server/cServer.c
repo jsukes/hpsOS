@@ -46,6 +46,7 @@ extern int errno;
 #define CASE_SEND_CSERVER_DATA_IPC 11
 #define CASE_QUERY_BOARD_INFO 12
 #define CASE_GET_BOARD_INFO_IPC 13
+#define CASE_SET_QUERY_DATA_TIMEOUT 15
 #define CASE_QUERY_DATA 16
 #define CASE_SHUTDOWN_SERVER 17
 
@@ -61,6 +62,7 @@ unsigned long g_maxDataIdx;
 
 uint32_t g_connectedBoards[MAX_FPGAS+1];
 uint32_t g_numBoards, g_portMax, g_numPorts;
+uint32_t g_queryTimeout;
 
 int g_ipcCommFd;
 int g_enetCommFd[MAX_FPGAS+1] = {0};
@@ -357,6 +359,7 @@ void resetGlobalVars(){ /* function to reset all global variables, global variab
     g_recLen = 2048; g_trigDelay = 0; g_packetsize = 2048;
     g_idx1len = 1; g_idx2len = 1; g_idx3len = 1;
     g_id1 = 0; g_id2 = 0; g_id3 = 0;
+    g_queryTimeout = 1000;
 }
 
 
@@ -438,6 +441,9 @@ void resetFPGAdataAcqParams(){ /* function to reset data acquisition variables o
     sendENETmsg(fmsg,0);
     
     fmsg[0] = CASE_SET_RECORD_LENGTH; fmsg[1] = g_recLen; fmsg[2] = g_packetsize;
+    sendENETmsg(fmsg,0);
+    
+    fmsg[0] = CASE_SET_QUERY_DATA_TIMEOUT; fmsg[1] = g_queryTimeout;
     sendENETmsg(fmsg,0);
 }
 
@@ -794,6 +800,16 @@ int main(int argc, char *argv[]) { printf("into main!\n");
                                             exit(1);
                                         }
                                     }
+                                    break;
+                                }
+                                
+                                case(CASE_SET_QUERY_DATA_TIMEOUT):{
+                                    if(fmsg.msg[1] > 99){
+										g_queryTimeout = fmsg.msg[1];
+									} else {
+										g_queryTimeout = 1000;
+									}
+									sendENETmsg(fmsg.msg,0);
                                     break;
                                 }
                                 
