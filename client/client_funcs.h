@@ -343,6 +343,7 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			getBoardData();
 			send(commsock->sockfd,g_boardData,4*sizeof(uint32_t),0);
             setsockopt(commsock->sockfd,IPPROTO_TCP,TCP_QUICKACK,&ONE,sizeof(int));
+            break;
 		}
 		
 		case(CASE_SET_QUERY_DATA_TIMEOUT):{
@@ -351,6 +352,7 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			} else {
 				g_queryTimeout = 1000;
 			}
+			break;
 		}
 		
 		case(CASE_QUERY_DATA):{
