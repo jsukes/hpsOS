@@ -168,8 +168,8 @@ class dataServer():
 		if qdto > MIN_QUERY_DATA_TIMEOUT:
 			self.queryDataTimeout = qdto		
 		else:
-			print 'Minimum Query Data Timeout = 100 (1ms)'
-			self.queryDataTimeout = 1000
+			print 'Minimum Query Data Timeout = 1000us (setting to 10 ms)'
+			self.queryDataTimeout = 10000
 			
 		msg = struct.pack(self.cmsg,15,self.queryDataTimeout,0,0,"")	
 		self.ipcsock.send(msg)

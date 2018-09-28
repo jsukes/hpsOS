@@ -347,10 +347,10 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 		}
 		
 		case(CASE_SET_QUERY_DATA_TIMEOUT):{
-			if(enetmsg[1] > 99){
-				g_queryTimeout = enetmsg[1];
+			if(enetmsg[1] > 999){
+				g_queryTimeout = enetmsg[1]/10;
 			} else {
-				g_queryTimeout = 1000;
+				g_queryTimeout = 10000/10;
 			}
 			break;
 		}
