@@ -168,27 +168,41 @@ class dataServer():
 		msg = struct.pack(self.cmsg,16,nbd,0,0,"")
 		self.ipcsock.send(msg)
 	
-	def setArdTrigNum(self,atn):		
+	def setArdTrigNum(self,atn):
+		# tell the FPGA how many transmit commands are going to be issued
+		# note: turning the outputs high and turning the outputs low are 
+		# separate commands, so every time you turn an output high then low
+		# counts as two trigger events	
 		msg = struct.pack(self.cmsg,20,atn,0,0,"")
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
 	def setArdTrigVal(self,num,atv):
+		# set the trigger value at the "num"th index in the list of triggers equal to "atv"
+		# the FPGA doesn't auto-increment "num" each time it gets a new trigger command, it must be set explicitly every time
+		# "atv" is a 16 bit number, each bit controls the output state of the corresponding arduino header pin
 		msg = struct.pack(self.cmsg,21,num,atv,0,"")
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
 	
 	def setArdTrigWait(self,num,atw):
+		# set the duration of the trigger at the "num"th of the trigger list equal to "atw"
+		# the list storing the trigger values and their durations are separate
+		# the FPGA doesn't auto-increment "num" each time it gets a new trigger wait command, it must be set explicitly every time
+		# "atw" is the trigger duration in microseconds
 		msg = struct.pack(self.cmsg,22,num,int(atw*self.ardTrigClk),0,"")
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
 		
-	def setArdTrigs(self,num=0,duration_us=1,val=0):		
+	def setArdTrigs(self,num=0,duration_us=1,val=0):
+		# this was a work in progress that combined the commands from setArdTrigVal and setArdTrigWait
+		# i'm not sure whether or not it works, but the code seems to be implemented on the SoC so it probably does	
 		msg = struct.pack(self.cmsg,24,int(num),int(duration_us*self.ardTrigClk),int(val),"")
 		self.ipcsock.send(msg)
 		time.sleep(0.05)
 	
 	def setArdTrigComms(self,atc):
+		# this command is used to issue control flow commands to the FPGA for the transmit signals
 		# bit0 = 1 -> comms channel open (needs to stay open to send trig datas)
 		# bit1 = 1 -> enable writing to trig instruction set
 		# bit7 = 1 -> reset clocks and counters

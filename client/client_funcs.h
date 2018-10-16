@@ -444,15 +444,15 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 			break;
 		}
 		
-		//~ case(CASE_ARDUINO_TRIG):{// loads board-specific data from onboard file
-			//~ DREF(FPGA->arduinoTrigNum) = enetmsg[1];
-			//~ usleep(5);
-			//~ DREF(FPGA->arduinoTrigVal) = enetmsg[3];
-			//~ usleep(5);
-			//~ DREF(FPGA->arduinoTrigWait) = enetmsg[2];
-			//~ usleep(5);	
-			//~ break;
-		//~ }
+		case(CASE_ARDUINO_TRIG):{// loads board-specific data from onboard file
+			DREF(FPGA->arduinoTrigNum) = enetmsg[1];
+			usleep(5);
+			DREF(FPGA->arduinoTrigVal) = enetmsg[3];
+			usleep(5);
+			DREF(FPGA->arduinoTrigWait) = enetmsg[2];
+			usleep(5);	
+			break;
+		}
 	
 		default:{
 			printf("default case, doing nothing\n");
