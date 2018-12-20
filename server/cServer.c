@@ -299,6 +299,7 @@ void acceptENETconnection(struct POLLsock **psock, struct POLLsock *tmp){ /* fun
     ps->portNum = tmp->portNum;
     ps->is_enet = 1;
     ps->is_listener = 0;
+    ps->p_idx=0;
     setnonblocking(ps->clifd);
     //printf("ipAddr = %d\n", ps->ipAddr);
     if(ps->portNum != ENET_COMMPORT){
@@ -920,3 +921,15 @@ int main(int argc, char *argv[]) { printf("into main!\n");
     printf("successfully exited!\n");
     exit(0);
 }
+
+
+
+
+
+
+
+
+
+
+
+
