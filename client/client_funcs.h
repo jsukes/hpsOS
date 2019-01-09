@@ -439,7 +439,10 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 		case(CASE_ARDUINO_TRIG_COMMS):{// loads board-specific data from onboard file
 			DREF(FPGA->arduinoTrigComms) = enetmsg[1];
 			if( enetmsg[1] == 0x02 ){
+				//~ usleep(5);
+				printf("trig comms 0000000000 %d\n", DREF(FPGA->arduinoTrigComms));
 				DREF(FPGA->arduinoTrigComms) = 0;
+				printf("trig comms 0000000000 %d\n",DREF(FPGA->arduinoTrigComms));
 			}
 			break;
 		}
@@ -447,9 +450,9 @@ void FPGA_dataAcqController(struct FPGAvars *FPGA, struct ENETsock **ENET, fd_se
 		case(CASE_ARDUINO_TRIG):{// loads board-specific data from onboard file
 			DREF(FPGA->arduinoTrigNum) = enetmsg[1];
 			usleep(5);
-			DREF(FPGA->arduinoTrigVal) = enetmsg[3];
+			DREF(FPGA->arduinoTrigVals) = enetmsg[3];
 			usleep(5);
-			DREF(FPGA->arduinoTrigWait) = enetmsg[2];
+			DREF(FPGA->arduinoTrigWaits) = enetmsg[2];
 			usleep(5);	
 			break;
 		}
