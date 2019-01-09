@@ -39,7 +39,7 @@
 #include "soc_cv_av/socal/socal.h"
 #include "soc_cv_av/socal/hps.h"
 #include "soc_cv_av/socal/alt_gpio.h"       
-#include "hps_0TxRx.h"
+#include "hps_0h.h"
 
 
 #define HW_REGS_BASE ( ALT_STM_OFST )  
